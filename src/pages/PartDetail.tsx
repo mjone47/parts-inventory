@@ -15,6 +15,8 @@ import {
   RefreshCw,
   ImagePlus,
   Save,
+  Search,
+  X,
 } from 'lucide-react';
 import { useApp } from '../data/store';
 import Modal from '../components/Modal';
@@ -26,7 +28,9 @@ export default function PartDetail() {
   const {
     getPartById,
     updatePart,
+    products,
     getProductById,
+    updateProduct,
     getVendorById,
     vendors,
     getWarehouseLocationById,
@@ -62,6 +66,9 @@ export default function PartDetail() {
     url: '',
     leadTimeDays: 0,
   });
+  const [showLinkProductModal, setShowLinkProductModal] = useState(false);
+  const [productSearchQuery, setProductSearchQuery] = useState('');
+  const [selectedProductId, setSelectedProductId] = useState('');
   const [showSuccessToast, setShowSuccessToast] = useState(false);
 
   useEffect(() => {
@@ -172,6 +179,62 @@ export default function PartDetail() {
   const getUserName = (userId: string) => {
     const user = users.find((u) => u.id === userId);
     return user?.name ?? 'Unknown';
+  };
+
+  // Products not yet linked to this part
+  const availableProducts = useMemo(() => {
+    if (!part) return [];
+    const linked = new Set(part.compatibleProducts);
+    let list = products.filter((p) => !linked.has(p.id));
+    if (productSearchQuery.trim()) {
+      const q = productSearchQuery.toLowerCase();
+      list = list.filter(
+        (p) =>
+          p.name.toLowerCase().includes(q) ||
+          p.model.toLowerCase().includes(q) ||
+          p.manufacturer.toLowerCase().includes(q) ||
+          p.category.toLowerCase().includes(q)
+      );
+    }
+    return list;
+  }, [part, products, productSearchQuery]);
+
+  const handleLinkProduct = () => {
+    if (!selectedProductId || !part) return;
+    // 1. Add product ID to this part's compatibleProducts
+    updatePart(part.id, {
+      compatibleProducts: [...part.compatibleProducts, selectedProductId],
+    });
+    // 2. Add this part to the product's parts array
+    const product = getProductById(selectedProductId);
+    if (product) {
+      const nextLabel = String(product.parts.length + 1);
+      updateProduct(product.id, {
+        parts: [
+          ...product.parts,
+          { id: crypto.randomUUID(), partId: part.id, positionLabel: nextLabel, x: 0, y: 0 },
+        ],
+      });
+    }
+    setSelectedProductId('');
+    setProductSearchQuery('');
+    setShowLinkProductModal(false);
+    setShowSuccessToast(true);
+  };
+
+  const handleUnlinkProduct = (productId: string) => {
+    if (!part) return;
+    // 1. Remove product from this part's compatibleProducts
+    updatePart(part.id, {
+      compatibleProducts: part.compatibleProducts.filter((pid) => pid !== productId),
+    });
+    // 2. Remove this part from the product's parts array
+    const product = getProductById(productId);
+    if (product) {
+      updateProduct(product.id, {
+        parts: product.parts.filter((pp) => pp.partId !== part.id),
+      });
+    }
   };
 
   return (
@@ -337,7 +400,16 @@ export default function PartDetail() {
         <div className="space-y-6">
           {/* Compatible Products */}
           <div className="bg-white rounded-xl border border-gray-200 p-6">
-            <h2 className="text-lg font-semibold text-gray-900 mb-4">Compatible Products</h2>
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-lg font-semibold text-gray-900">Compatible Products</h2>
+              <button
+                onClick={() => setShowLinkProductModal(true)}
+                className="flex items-center gap-1 px-3 py-1.5 text-sm bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-100 transition-colors"
+              >
+                <Plus size={14} />
+                Link Product
+              </button>
+            </div>
             {compatibleProducts.length === 0 ? (
               <p className="text-sm text-gray-400 text-center py-4">
                 Not linked to any products yet.
@@ -346,23 +418,34 @@ export default function PartDetail() {
               <div className="space-y-2">
                 {compatibleProducts.map((product) =>
                   product ? (
-                    <Link
+                    <div
                       key={product.id}
-                      to={`/products/${product.id}`}
                       className="flex items-center gap-3 p-3 rounded-lg hover:bg-blue-50 transition-colors group"
                     >
-                      <div className="w-10 h-10 rounded-lg bg-gray-100 flex items-center justify-center group-hover:bg-blue-100">
-                        <Package size={18} className="text-gray-400 group-hover:text-blue-500" />
-                      </div>
-                      <div>
-                        <p className="text-sm font-medium text-gray-900 group-hover:text-blue-600">
-                          {product.name}
-                        </p>
-                        <p className="text-xs text-gray-500">
-                          {product.model} - {product.manufacturer}
-                        </p>
-                      </div>
-                    </Link>
+                      <Link
+                        to={`/products/${product.id}`}
+                        className="flex items-center gap-3 flex-1 min-w-0"
+                      >
+                        <div className="w-10 h-10 rounded-lg bg-gray-100 flex items-center justify-center group-hover:bg-blue-100 shrink-0">
+                          <Package size={18} className="text-gray-400 group-hover:text-blue-500" />
+                        </div>
+                        <div className="min-w-0">
+                          <p className="text-sm font-medium text-gray-900 group-hover:text-blue-600 truncate">
+                            {product.name}
+                          </p>
+                          <p className="text-xs text-gray-500 truncate">
+                            {product.model} - {product.manufacturer}
+                          </p>
+                        </div>
+                      </Link>
+                      <button
+                        onClick={() => handleUnlinkProduct(product.id)}
+                        className="p-1.5 rounded-lg text-gray-300 hover:text-red-500 hover:bg-red-50 transition-colors opacity-0 group-hover:opacity-100 shrink-0"
+                        title="Unlink product"
+                      >
+                        <X size={16} />
+                      </button>
+                    </div>
                   ) : null
                 )}
               </div>
@@ -671,6 +754,97 @@ export default function PartDetail() {
             </button>
           </div>
         </form>
+      </Modal>
+
+      {/* Link Product Modal */}
+      <Modal
+        isOpen={showLinkProductModal}
+        onClose={() => {
+          setShowLinkProductModal(false);
+          setSelectedProductId('');
+          setProductSearchQuery('');
+        }}
+        title="Link Part to Product"
+        size="lg"
+      >
+        <div className="space-y-4">
+          {products.length === 0 ? (
+            <div className="text-center py-8 text-gray-400">
+              <Package size={40} className="mx-auto mb-2" />
+              <p className="text-sm">No products have been created yet.</p>
+              <p className="text-xs mt-1">Create a product first, then link this part to it.</p>
+            </div>
+          ) : (
+            <>
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
+                <input
+                  type="text"
+                  placeholder="Search products..."
+                  value={productSearchQuery}
+                  onChange={(e) => setProductSearchQuery(e.target.value)}
+                  className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
+                />
+              </div>
+
+              <div className="max-h-64 overflow-y-auto border border-gray-200 rounded-lg divide-y divide-gray-100">
+                {availableProducts.length === 0 ? (
+                  <div className="p-4 text-center text-gray-500 text-sm">
+                    {productSearchQuery.trim()
+                      ? 'No matching products found'
+                      : 'All products are already linked to this part'}
+                  </div>
+                ) : (
+                  availableProducts.map((product) => (
+                    <label
+                      key={product.id}
+                      className={`flex items-center gap-3 p-3 cursor-pointer hover:bg-blue-50 transition-colors ${
+                        selectedProductId === product.id ? 'bg-blue-50' : ''
+                      }`}
+                    >
+                      <input
+                        type="radio"
+                        name="selectedProduct"
+                        value={product.id}
+                        checked={selectedProductId === product.id}
+                        onChange={() => setSelectedProductId(product.id)}
+                        className="text-blue-600"
+                      />
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium text-gray-900 truncate">{product.name}</p>
+                        <p className="text-xs text-gray-500">
+                          {product.model} {product.manufacturer ? `- ${product.manufacturer}` : ''} {product.category ? `| ${product.category}` : ''}
+                        </p>
+                      </div>
+                    </label>
+                  ))
+                )}
+              </div>
+
+              <div className="flex justify-end gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowLinkProductModal(false);
+                    setSelectedProductId('');
+                    setProductSearchQuery('');
+                  }}
+                  className="px-4 py-2 text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleLinkProduct}
+                  disabled={!selectedProductId}
+                  className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                >
+                  Link Product
+                </button>
+              </div>
+            </>
+          )}
+        </div>
       </Modal>
     </div>
   );

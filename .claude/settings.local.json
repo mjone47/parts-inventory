@@ -1,0 +1,21 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm create:*)",
+      "Bash(npx --yes create-vite@latest parts-app --template react-ts)",
+      "Bash(cp -r parts-app/* .)",
+      "Bash(cp parts-app/.gitignore .)",
+      "Bash(rm -rf parts-app)",
+      "Bash(npm install:*)",
+      "Bash(npx tsc:*)",
+      "Bash(npm run:*)",
+      "mcp__Claude_Preview__preview_start",
+      "Bash(curl -s http://localhost:3001/api/products)",
+      "Bash(python3 -c \"import sys,json; data=json.load\\(sys.stdin\\); print\\(f''''{len\\(data\\)} products''''\\); [print\\(f''''  {p[name]} - {len\\(p[parts]\\)} parts''''\\) for p in data]\")",
+      "Bash(curl -s http://localhost:3001/api/warehouse-locations)",
+      "Bash(curl -s -X POST http://localhost:3001/api/users -H \"Content-Type: application/json\" -d '{\"\"name\"\":\"\"Test User\"\",\"\"email\"\":\"\"test@remaninc.com\"\",\"\"role\"\":\"\"technician\"\"}')",
+      "Bash(curl -s -X DELETE http://localhost:3001/api/users/8e0ce9c7-4c73-45ff-a3c6-2418a758914c)",
+      "Bash(taskkill //F //IM node.exe)"
+    ]
+  }
+}

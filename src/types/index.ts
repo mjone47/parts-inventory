@@ -31,6 +31,8 @@ export interface ProductPart {
   y: number; // percentage position on exploded view image
 }
 
+export type PartCondition = 'new' | 'like_new' | 'good' | 'fair' | 'poor';
+
 export interface Part {
   id: string;
   partNumber: string;
@@ -38,9 +40,15 @@ export interface Part {
   description: string;
   category: string;
   image?: string;
-  quantityInStock: number;
+  quantityInStock: number; // total = sum of all condition quantities
   minimumStock: number;
   unitCost: number;
+  // Quantity breakdown by condition
+  qtyNew: number;
+  qtyLikeNew: number;
+  qtyGood: number;
+  qtyFair: number;
+  qtyPoor: number;
   compatibleProducts: string[]; // product IDs
   vendors: PartVendor[];
   warehouseLocationId?: string;

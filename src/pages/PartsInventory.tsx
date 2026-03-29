@@ -11,6 +11,7 @@ import {
   ArrowUpDown,
   ArrowUp,
   ArrowDown,
+  Trash2,
 } from 'lucide-react';
 import { useApp } from '../data/store';
 import Modal from '../components/Modal';
@@ -21,7 +22,7 @@ type SortDir = 'asc' | 'desc';
 const PAGE_SIZE = 15;
 
 export default function PartsInventory() {
-  const { parts, addPart, canEditPartNames, searchParts } = useApp();
+  const { parts, addPart, deletePart, canEditPartNames, searchParts, generatePrcId } = useApp();
   const navigate = useNavigate();
 
   const [searchQuery, setSearchQuery] = useState('');
@@ -278,13 +279,26 @@ export default function PartsInventory() {
                             <Eye size={16} />
                           </button>
                           {canEditPartNames() && (
-                            <button
-                              onClick={() => navigate(`/parts/${part.id}`)}
-                              className="p-1.5 rounded-lg text-gray-400 hover:bg-amber-50 hover:text-amber-600 transition-colors"
-                              title="Edit"
-                            >
-                              <Pencil size={16} />
-                            </button>
+                            <>
+                              <button
+                                onClick={() => navigate(`/parts/${part.id}`)}
+                                className="p-1.5 rounded-lg text-gray-400 hover:bg-amber-50 hover:text-amber-600 transition-colors"
+                                title="Edit"
+                              >
+                                <Pencil size={16} />
+                              </button>
+                              <button
+                                onClick={() => {
+                                  if (confirm(`Delete "${part.name}"? This cannot be undone.`)) {
+                                    deletePart(part.id);
+                                  }
+                                }}
+                                className="p-1.5 rounded-lg text-gray-400 hover:bg-red-50 hover:text-red-600 transition-colors"
+                                title="Delete"
+                              >
+                                <Trash2 size={16} />
+                              </button>
+                            </>
                           )}
                         </div>
                       </td>
@@ -353,13 +367,27 @@ export default function PartsInventory() {
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Part Number</label>
-              <input
-                type="text"
-                required
-                value={formData.partNumber}
-                onChange={(e) => setFormData({ ...formData, partNumber: e.target.value })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
-              />
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  required
+                  value={formData.partNumber}
+                  onChange={(e) => setFormData({ ...formData, partNumber: e.target.value })}
+                  className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
+                  placeholder="Enter or generate"
+                />
+                <button
+                  type="button"
+                  onClick={async () => {
+                    const prcId = await generatePrcId();
+                    setFormData({ ...formData, partNumber: prcId });
+                  }}
+                  className="px-3 py-2 text-xs font-medium bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors whitespace-nowrap"
+                  title="Generate a unique PRC Part ID"
+                >
+                  Generate ID
+                </button>
+              </div>
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Name</label>

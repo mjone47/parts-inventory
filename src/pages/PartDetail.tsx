@@ -18,6 +18,7 @@ import {
   Save,
   Search,
   X,
+  Trash2,
 } from 'lucide-react';
 import { useApp } from '../data/store';
 import Modal from '../components/Modal';
@@ -29,6 +30,7 @@ export default function PartDetail() {
   const {
     getPartById,
     updatePart,
+    deletePart,
     products,
     getProductById,
     updateProduct,
@@ -292,13 +294,27 @@ export default function PartDetail() {
               <div className="flex items-center gap-3">
                 <h1 className="text-2xl font-bold text-gray-900">{part.name}</h1>
                 {canEditPartNames() && (
-                  <button
-                    onClick={handleOpenEditModal}
-                    className="p-1.5 rounded-lg text-gray-400 hover:bg-amber-50 hover:text-amber-600 transition-colors"
-                    title="Edit Part"
-                  >
-                    <Pencil size={16} />
-                  </button>
+                  <>
+                    <button
+                      onClick={handleOpenEditModal}
+                      className="p-1.5 rounded-lg text-gray-400 hover:bg-amber-50 hover:text-amber-600 transition-colors"
+                      title="Edit Part"
+                    >
+                      <Pencil size={16} />
+                    </button>
+                    <button
+                      onClick={() => {
+                        if (confirm(`Delete "${part.name}"? This cannot be undone.`)) {
+                          deletePart(part.id);
+                          navigate('/parts');
+                        }
+                      }}
+                      className="p-1.5 rounded-lg text-gray-400 hover:bg-red-50 hover:text-red-600 transition-colors"
+                      title="Delete Part"
+                    >
+                      <Trash2 size={16} />
+                    </button>
+                  </>
                 )}
               </div>
               <p className="text-sm text-gray-500 font-mono mt-1">{part.partNumber}</p>
@@ -314,7 +330,7 @@ export default function PartDetail() {
           {/* Stock Info */}
           <div className="grid grid-cols-3 gap-4 mt-6">
             <div className="bg-gray-50 rounded-lg p-4 text-center">
-              <p className="text-xs text-gray-500 font-medium uppercase tracking-wider">In Stock</p>
+              <p className="text-xs text-gray-500 font-medium uppercase tracking-wider">Total In Stock</p>
               <p
                 className={`text-3xl font-bold mt-1 ${
                   part.quantityInStock < part.minimumStock ? 'text-red-600' : 'text-green-600'
@@ -332,6 +348,40 @@ export default function PartDetail() {
               <p className="text-3xl font-bold mt-1 text-gray-900">${part.unitCost.toFixed(2)}</p>
             </div>
           </div>
+
+          {/* Condition Breakdown */}
+          {part.quantityInStock > 0 && (
+            <div className="mt-4">
+              <p className="text-xs text-gray-500 font-medium uppercase tracking-wider mb-2">Stock by Condition</p>
+              <div className="flex flex-wrap gap-2">
+                {part.qtyNew > 0 && (
+                  <span className="px-3 py-1.5 rounded-full text-xs font-medium bg-emerald-100 text-emerald-700">
+                    New: {part.qtyNew}
+                  </span>
+                )}
+                {part.qtyLikeNew > 0 && (
+                  <span className="px-3 py-1.5 rounded-full text-xs font-medium bg-green-100 text-green-700">
+                    Like New: {part.qtyLikeNew}
+                  </span>
+                )}
+                {part.qtyGood > 0 && (
+                  <span className="px-3 py-1.5 rounded-full text-xs font-medium bg-blue-100 text-blue-700">
+                    Good: {part.qtyGood}
+                  </span>
+                )}
+                {part.qtyFair > 0 && (
+                  <span className="px-3 py-1.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-700">
+                    Fair: {part.qtyFair}
+                  </span>
+                )}
+                {part.qtyPoor > 0 && (
+                  <span className="px-3 py-1.5 rounded-full text-xs font-medium bg-red-100 text-red-700">
+                    Poor: {part.qtyPoor}
+                  </span>
+                )}
+              </div>
+            </div>
+          )}
         </div>
       </div>
 

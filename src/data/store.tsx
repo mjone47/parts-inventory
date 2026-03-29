@@ -48,8 +48,10 @@ interface AppContextValue {
   addPartAsync: (part: Omit<Part, 'id' | 'createdAt' | 'updatedAt'>) => Promise<Part>;
   updatePart: (id: string, updates: Partial<Omit<Part, 'id'>>) => void;
   deletePart: (id: string) => void;
-  adjustStock: (id: string, quantityChange: number) => void;
+  adjustStock: (id: string, quantityChange: number, condition?: string) => void;
   searchParts: (query: string) => Part[];
+  generatePrcId: () => Promise<string>;
+  checkDuplicatePartNumber: (partNumber: string) => Promise<{ exists: boolean; partId?: string; partName?: string }>;
 
   // Vendors
   vendors: Vendor[];
@@ -270,15 +272,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     api(`/parts/${id}`, { method: 'DELETE' });
   }, []);
 
-  const adjustStock = useCallback((id: string, quantityChange: number) => {
+  const adjustStock = useCallback((id: string, quantityChange: number, condition?: string) => {
     setParts((prev) =>
-      prev.map((p) =>
-        p.id === id
-          ? { ...p, quantityInStock: Math.max(0, p.quantityInStock + quantityChange), updatedAt: new Date().toISOString() }
-          : p,
-      ),
+      prev.map((p) => {
+        if (p.id !== id) return p;
+        const updated = { ...p, quantityInStock: Math.max(0, p.quantityInStock + quantityChange), updatedAt: new Date().toISOString() };
+        // Update condition-specific quantity
+        if (condition === 'new') updated.qtyNew = Math.max(0, (p.qtyNew || 0) + quantityChange);
+        else if (condition === 'like_new') updated.qtyLikeNew = Math.max(0, (p.qtyLikeNew || 0) + quantityChange);
+        else if (condition === 'good') updated.qtyGood = Math.max(0, (p.qtyGood || 0) + quantityChange);
+        else if (condition === 'fair') updated.qtyFair = Math.max(0, (p.qtyFair || 0) + quantityChange);
+        else if (condition === 'poor') updated.qtyPoor = Math.max(0, (p.qtyPoor || 0) + quantityChange);
+        return updated;
+      }),
     );
-    api(`/parts/${id}/stock`, { method: 'PATCH', body: JSON.stringify({ quantityChange }) });
+    api(`/parts/${id}/stock`, { method: 'PATCH', body: JSON.stringify({ quantityChange, condition }) });
   }, []);
 
   const searchParts = useCallback(
@@ -294,6 +302,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     },
     [parts],
   );
+
+  const generatePrcId = useCallback(async (): Promise<string> => {
+    const result = await api<{ partNumber: string }>('/parts/next-prc-id');
+    return result.partNumber;
+  }, []);
+
+  const checkDuplicatePartNumber = useCallback(async (partNumber: string): Promise<{ exists: boolean; partId?: string; partName?: string }> => {
+    return api<{ exists: boolean; partId?: string; partName?: string }>(`/parts/check-duplicate/${encodeURIComponent(partNumber)}`);
+  }, []);
 
   // ── Vendors ────────────────────────────────────────────────────────────────
 
@@ -629,7 +646,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const value: AppContextValue = {
     products, getProductById, addProduct, updateProduct, deleteProduct, searchProducts,
-    parts, getPartById, addPart, addPartAsync, updatePart, deletePart, adjustStock, searchParts,
+    parts, getPartById, addPart, addPartAsync, updatePart, deletePart, adjustStock, searchParts, generatePrcId, checkDuplicatePartNumber,
     vendors, getVendorById, addVendor, updateVendor, deleteVendor,
     harvestSessions, getHarvestSessionById, addHarvestSession, updateHarvestSession, completeHarvestSession, addHarvestedPart,
     orders, getOrderById, addOrder, updateOrder, updateOrderStatus, receiveOrderItems,

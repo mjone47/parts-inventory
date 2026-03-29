@@ -31,6 +31,8 @@ export default function ProductDetail() {
     addPartAsync,
     getVendorById,
     adjustStock,
+    generatePrcId,
+    checkDuplicatePartNumber,
   } = useApp();
 
   const product = getProductById(id ?? '');
@@ -594,13 +596,27 @@ export default function ProductDetail() {
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Part Number</label>
-                <input
-                  type="text"
-                  required
-                  value={newPartForm.partNumber}
-                  onChange={(e) => setNewPartForm({ ...newPartForm, partNumber: e.target.value })}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
-                />
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    required
+                    value={newPartForm.partNumber}
+                    onChange={(e) => setNewPartForm({ ...newPartForm, partNumber: e.target.value })}
+                    className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
+                    placeholder="Enter or generate"
+                  />
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      const prcId = await generatePrcId();
+                      setNewPartForm({ ...newPartForm, partNumber: prcId });
+                    }}
+                    className="px-3 py-2 text-xs font-medium bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors whitespace-nowrap"
+                    title="Generate a unique PRC Part ID"
+                  >
+                    Generate ID
+                  </button>
+                </div>
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Name</label>

@@ -14,6 +14,11 @@ interface PartRow {
   quantity_in_stock: number;
   minimum_stock: number;
   unit_cost: number;
+  qty_new: number;
+  qty_like_new: number;
+  qty_good: number;
+  qty_fair: number;
+  qty_poor: number;
   warehouse_location_id: string | null;
   created_at: string;
   updated_at: string;
@@ -45,6 +50,11 @@ function formatPart(row: PartRow, vendors: PartVendorRow[], compatibleProducts: 
     quantityInStock: row.quantity_in_stock,
     minimumStock: row.minimum_stock,
     unitCost: row.unit_cost,
+    qtyNew: row.qty_new ?? 0,
+    qtyLikeNew: row.qty_like_new ?? 0,
+    qtyGood: row.qty_good ?? 0,
+    qtyFair: row.qty_fair ?? 0,
+    qtyPoor: row.qty_poor ?? 0,
     warehouseLocationId: row.warehouse_location_id,
     vendors: vendors.map(v => ({
       vendorId: v.vendor_id,
@@ -96,6 +106,29 @@ router.get('/search', (req, res) => {
   res.json(result);
 });
 
+// Generate next available PRC Part ID
+router.get('/next-prc-id', (_req, res) => {
+  const db = getDb();
+  const row = db.prepare(
+    "SELECT part_number FROM parts WHERE part_number LIKE 'PRC%' ORDER BY part_number DESC LIMIT 1"
+  ).get() as { part_number: string } | undefined;
+
+  let nextNum = 1;
+  if (row) {
+    const match = row.part_number.match(/^PRC(\d+)$/);
+    if (match) nextNum = parseInt(match[1], 10) + 1;
+  }
+  const nextId = 'PRC' + String(nextNum).padStart(7, '0');
+  res.json({ partNumber: nextId });
+});
+
+// Check if a part number already exists
+router.get('/check-duplicate/:partNumber', (req, res) => {
+  const db = getDb();
+  const existing = db.prepare('SELECT id, name FROM parts WHERE part_number = ?').get(req.params.partNumber) as { id: string; name: string } | undefined;
+  res.json({ exists: !!existing, partId: existing?.id, partName: existing?.name });
+});
+
 router.get('/:id', (req, res) => {
   const db = getDb();
   const part = getPartWithRelations(db, req.params.id);
@@ -105,12 +138,19 @@ router.get('/:id', (req, res) => {
 
 router.post('/', (req, res) => {
   const db = getDb();
-  const { partNumber, name, description, category, image, quantityInStock, minimumStock, unitCost, warehouseLocationId, vendors, compatibleProducts, createdAt, updatedAt } = req.body;
+  const { partNumber, name, description, category, image, quantityInStock, minimumStock, unitCost, qtyNew, qtyLikeNew, qtyGood, qtyFair, qtyPoor, warehouseLocationId, vendors, compatibleProducts, createdAt, updatedAt } = req.body;
+
+  // Check for duplicate part number
+  const existing = db.prepare('SELECT id FROM parts WHERE part_number = ?').get(partNumber) as { id: string } | undefined;
+  if (existing) {
+    return res.status(409).json({ error: `Part number "${partNumber}" already exists.`, existingId: existing.id });
+  }
+
   const id = uuidv4();
   const now = new Date().toISOString();
   db.prepare(
-    'INSERT INTO parts (id, part_number, name, description, category, image, quantity_in_stock, minimum_stock, unit_cost, warehouse_location_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
-  ).run(id, partNumber, name, description || '', category || '', image || null, quantityInStock || 0, minimumStock || 0, unitCost || 0, warehouseLocationId || null, createdAt || now, updatedAt || now);
+    'INSERT INTO parts (id, part_number, name, description, category, image, quantity_in_stock, minimum_stock, unit_cost, qty_new, qty_like_new, qty_good, qty_fair, qty_poor, warehouse_location_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+  ).run(id, partNumber, name, description || '', category || '', image || null, quantityInStock || 0, minimumStock || 0, unitCost || 0, qtyNew || 0, qtyLikeNew || 0, qtyGood || 0, qtyFair || 0, qtyPoor || 0, warehouseLocationId || null, createdAt || now, updatedAt || now);
 
   if (vendors && Array.isArray(vendors)) {
     const insertVendor = db.prepare('INSERT INTO part_vendors (id, part_id, vendor_id, vendor_part_number, cost, url, lead_time_days) VALUES (?, ?, ?, ?, ?, ?, ?)');
@@ -135,10 +175,19 @@ router.put('/:id', (req, res) => {
   const existing = db.prepare('SELECT * FROM parts WHERE id = ?').get(req.params.id) as PartRow | undefined;
   if (!existing) return res.status(404).json({ error: 'Part not found' });
 
-  const { partNumber, name, description, category, image, quantityInStock, minimumStock, unitCost, warehouseLocationId, vendors, compatibleProducts } = req.body;
+  const { partNumber, name, description, category, image, quantityInStock, minimumStock, unitCost, qtyNew, qtyLikeNew, qtyGood, qtyFair, qtyPoor, warehouseLocationId, vendors, compatibleProducts } = req.body;
+
+  // Check for duplicate part number (if changing)
+  if (partNumber && partNumber !== existing.part_number) {
+    const dup = db.prepare('SELECT id FROM parts WHERE part_number = ? AND id != ?').get(partNumber, req.params.id) as { id: string } | undefined;
+    if (dup) {
+      return res.status(409).json({ error: `Part number "${partNumber}" already exists.` });
+    }
+  }
+
   const now = new Date().toISOString();
   db.prepare(
-    'UPDATE parts SET part_number = ?, name = ?, description = ?, category = ?, image = ?, quantity_in_stock = ?, minimum_stock = ?, unit_cost = ?, warehouse_location_id = ?, updated_at = ? WHERE id = ?'
+    'UPDATE parts SET part_number = ?, name = ?, description = ?, category = ?, image = ?, quantity_in_stock = ?, minimum_stock = ?, unit_cost = ?, qty_new = ?, qty_like_new = ?, qty_good = ?, qty_fair = ?, qty_poor = ?, warehouse_location_id = ?, updated_at = ? WHERE id = ?'
   ).run(
     partNumber ?? existing.part_number,
     name ?? existing.name,
@@ -148,6 +197,11 @@ router.put('/:id', (req, res) => {
     quantityInStock ?? existing.quantity_in_stock,
     minimumStock ?? existing.minimum_stock,
     unitCost ?? existing.unit_cost,
+    qtyNew ?? (existing as any).qty_new ?? 0,
+    qtyLikeNew ?? (existing as any).qty_like_new ?? 0,
+    qtyGood ?? (existing as any).qty_good ?? 0,
+    qtyFair ?? (existing as any).qty_fair ?? 0,
+    qtyPoor ?? (existing as any).qty_poor ?? 0,
     warehouseLocationId !== undefined ? warehouseLocationId : existing.warehouse_location_id,
     now,
     req.params.id
@@ -182,13 +236,33 @@ router.delete('/:id', (req, res) => {
 
 router.patch('/:id/stock', (req, res) => {
   const db = getDb();
-  const { quantityChange } = req.body;
+  const { quantityChange, condition } = req.body;
   const existing = db.prepare('SELECT * FROM parts WHERE id = ?').get(req.params.id) as PartRow | undefined;
   if (!existing) return res.status(404).json({ error: 'Part not found' });
 
   const newQuantity = existing.quantity_in_stock + (quantityChange || 0);
   const now = new Date().toISOString();
-  db.prepare('UPDATE parts SET quantity_in_stock = ?, updated_at = ? WHERE id = ?').run(newQuantity, now, req.params.id);
+
+  // Update total and condition-specific quantity
+  const conditionMap: Record<string, string> = {
+    'new': 'qty_new',
+    'like_new': 'qty_like_new',
+    'good': 'qty_good',
+    'fair': 'qty_fair',
+    'poor': 'qty_poor',
+  };
+  const condCol = condition ? conditionMap[condition] : null;
+  if (condCol) {
+    const currentCondQty = (existing as any)[condCol] || 0;
+    const newCondQty = Math.max(0, currentCondQty + (quantityChange || 0));
+    db.prepare(`UPDATE parts SET quantity_in_stock = ?, ${condCol} = ?, updated_at = ? WHERE id = ?`).run(
+      Math.max(0, newQuantity), newCondQty, now, req.params.id
+    );
+  } else {
+    db.prepare('UPDATE parts SET quantity_in_stock = ?, updated_at = ? WHERE id = ?').run(
+      Math.max(0, newQuantity), now, req.params.id
+    );
+  }
 
   const part = getPartWithRelations(db, req.params.id);
   res.json(part);

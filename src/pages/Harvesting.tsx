@@ -188,8 +188,8 @@ export default function Harvesting() {
     const row = harvestRows[index];
     if (!row.checked || row.added) return;
 
-    // Adjust stock
-    adjustStock(row.partId, row.quantity);
+    // Adjust stock with condition tracking
+    adjustStock(row.partId, row.quantity, row.condition);
 
     // Create inventory transaction
     addInventoryTransaction({

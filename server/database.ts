@@ -62,7 +62,7 @@ export function initializeDatabase(): Database.Database {
 
     CREATE TABLE IF NOT EXISTS parts (
       id TEXT PRIMARY KEY,
-      part_number TEXT NOT NULL,
+      part_number TEXT NOT NULL UNIQUE,
       name TEXT NOT NULL,
       description TEXT NOT NULL DEFAULT '',
       category TEXT NOT NULL DEFAULT '',
@@ -70,6 +70,11 @@ export function initializeDatabase(): Database.Database {
       quantity_in_stock INTEGER NOT NULL DEFAULT 0,
       minimum_stock INTEGER NOT NULL DEFAULT 0,
       unit_cost REAL NOT NULL DEFAULT 0,
+      qty_new INTEGER NOT NULL DEFAULT 0,
+      qty_like_new INTEGER NOT NULL DEFAULT 0,
+      qty_good INTEGER NOT NULL DEFAULT 0,
+      qty_fair INTEGER NOT NULL DEFAULT 0,
+      qty_poor INTEGER NOT NULL DEFAULT 0,
       warehouse_location_id TEXT,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
@@ -208,6 +213,19 @@ export function initializeDatabase(): Database.Database {
       FOREIGN KEY (order_id) REFERENCES internal_orders(id) ON DELETE CASCADE
     );
   `);
+
+  // ── Migrations for existing databases ────────────────────────────────────
+  const migrate = (sql: string) => {
+    try { database.exec(sql); } catch { /* column already exists */ }
+  };
+  migrate('ALTER TABLE parts ADD COLUMN qty_new INTEGER NOT NULL DEFAULT 0');
+  migrate('ALTER TABLE parts ADD COLUMN qty_like_new INTEGER NOT NULL DEFAULT 0');
+  migrate('ALTER TABLE parts ADD COLUMN qty_good INTEGER NOT NULL DEFAULT 0');
+  migrate('ALTER TABLE parts ADD COLUMN qty_fair INTEGER NOT NULL DEFAULT 0');
+  migrate('ALTER TABLE parts ADD COLUMN qty_poor INTEGER NOT NULL DEFAULT 0');
+
+  // Unique index on part_number (for existing DBs that didn't have UNIQUE)
+  migrate('CREATE UNIQUE INDEX IF NOT EXISTS idx_parts_part_number ON parts(part_number)');
 
   db = database;
   return database;

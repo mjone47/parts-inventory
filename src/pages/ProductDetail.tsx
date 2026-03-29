@@ -1,5 +1,6 @@
 import { useState, useRef, useMemo, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
+import { v4 as uuidv4 } from 'uuid';
 import {
   ArrowLeft,
   Upload,
@@ -170,7 +171,7 @@ export default function ProductDetail() {
   const handlePlaceHotspot = () => {
     if (!pendingHotspot || !selectedPartId || !hotspotLabel) return;
     const newPart: ProductPart = {
-      id: crypto.randomUUID(),
+      id: uuidv4(),
       partId: selectedPartId,
       positionLabel: hotspotLabel,
       x: pendingHotspot.x,
@@ -187,7 +188,7 @@ export default function ProductDetail() {
     if (!selectedPartId) return;
     const nextLabel = String(product.parts.length + 1);
     const newProductPart: ProductPart = {
-      id: crypto.randomUUID(),
+      id: uuidv4(),
       partId: selectedPartId,
       positionLabel: nextLabel,
       x: 0,
@@ -200,10 +201,12 @@ export default function ProductDetail() {
   };
 
   const [isCreatingPart, setIsCreatingPart] = useState(false);
+  const [createPartError, setCreatePartError] = useState('');
 
   const handleCreateAndAddPart = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsCreatingPart(true);
+    setCreatePartError('');
     try {
       const savedPart = await addPartAsync({
         ...newPartForm,
@@ -213,7 +216,7 @@ export default function ProductDetail() {
       });
       const nextLabel = String(product.parts.length + 1);
       const newProductPart: ProductPart = {
-        id: crypto.randomUUID(),
+        id: uuidv4(),
         partId: savedPart.id,
         positionLabel: nextLabel,
         x: 0,
@@ -233,6 +236,7 @@ export default function ProductDetail() {
       setShowPartModal(false);
     } catch (err) {
       console.error('Failed to create part:', err);
+      setCreatePartError(err instanceof Error ? err.message : 'Failed to create part. Please try again.');
     } finally {
       setIsCreatingPart(false);
     }
@@ -667,6 +671,11 @@ export default function ProductDetail() {
                 />
               </div>
             </div>
+            {createPartError && (
+              <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
+                {createPartError}
+              </div>
+            )}
             <div className="flex justify-end gap-3 pt-2">
               <button
                 type="button"

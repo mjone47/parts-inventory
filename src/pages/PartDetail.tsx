@@ -1,5 +1,6 @@
 import { useState, useRef, useMemo, useEffect } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
+import { v4 as uuidv4 } from 'uuid';
 import {
   ArrowLeft,
   Upload,
@@ -212,7 +213,7 @@ export default function PartDetail() {
       updateProduct(product.id, {
         parts: [
           ...product.parts,
-          { id: crypto.randomUUID(), partId: part.id, positionLabel: nextLabel, x: 0, y: 0 },
+          { id: uuidv4(), partId: part.id, positionLabel: nextLabel, x: 0, y: 0 },
         ],
       });
     }

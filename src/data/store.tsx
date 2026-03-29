@@ -45,6 +45,7 @@ interface AppContextValue {
   parts: Part[];
   getPartById: (id: string) => Part | undefined;
   addPart: (part: Omit<Part, 'id' | 'createdAt' | 'updatedAt'>) => Part;
+  addPartAsync: (part: Omit<Part, 'id' | 'createdAt' | 'updatedAt'>) => Promise<Part>;
   updatePart: (id: string, updates: Partial<Omit<Part, 'id'>>) => void;
   deletePart: (id: string) => void;
   adjustStock: (id: string, quantityChange: number) => void;
@@ -242,6 +243,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setParts((prev) => prev.map((p) => (p.id === tempPart.id ? saved : p)));
       });
       return tempPart;
+    },
+    [],
+  );
+
+  const addPartAsync = useCallback(
+    async (data: Omit<Part, 'id' | 'createdAt' | 'updatedAt'>): Promise<Part> => {
+      const saved = await api<Part>('/parts', { method: 'POST', body: JSON.stringify(data) });
+      setParts((prev) => [...prev, saved]);
+      return saved;
     },
     [],
   );
@@ -619,7 +629,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const value: AppContextValue = {
     products, getProductById, addProduct, updateProduct, deleteProduct, searchProducts,
-    parts, getPartById, addPart, updatePart, deletePart, adjustStock, searchParts,
+    parts, getPartById, addPart, addPartAsync, updatePart, deletePart, adjustStock, searchParts,
     vendors, getVendorById, addVendor, updateVendor, deleteVendor,
     harvestSessions, getHarvestSessionById, addHarvestSession, updateHarvestSession, completeHarvestSession, addHarvestedPart,
     orders, getOrderById, addOrder, updateOrder, updateOrderStatus, receiveOrderItems,

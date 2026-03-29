@@ -27,7 +27,7 @@ export default function ProductDetail() {
     updateProduct,
     parts,
     getPartById,
-    addPart,
+    addPartAsync,
     getVendorById,
     adjustStock,
   } = useApp();
@@ -199,34 +199,43 @@ export default function ProductDetail() {
     setShowPartModal(false);
   };
 
-  const handleCreateAndAddPart = (e: React.FormEvent) => {
+  const [isCreatingPart, setIsCreatingPart] = useState(false);
+
+  const handleCreateAndAddPart = async (e: React.FormEvent) => {
     e.preventDefault();
-    const newPart = addPart({
-      ...newPartForm,
-      compatibleProducts: [product.id],
-      vendors: [],
-      warehouseLocationId: undefined,
-    });
-    const nextLabel = String(product.parts.length + 1);
-    const newProductPart: ProductPart = {
-      id: crypto.randomUUID(),
-      partId: newPart.id,
-      positionLabel: nextLabel,
-      x: 0,
-      y: 0,
-    };
-    updateProduct(product.id, { parts: [...product.parts, newProductPart] });
-    setNewPartForm({
-      partNumber: '',
-      name: '',
-      description: '',
-      category: '',
-      quantityInStock: 0,
-      minimumStock: 0,
-      unitCost: 0,
-    });
-    setShowCreatePartForm(false);
-    setShowPartModal(false);
+    setIsCreatingPart(true);
+    try {
+      const savedPart = await addPartAsync({
+        ...newPartForm,
+        compatibleProducts: [product.id],
+        vendors: [],
+        warehouseLocationId: undefined,
+      });
+      const nextLabel = String(product.parts.length + 1);
+      const newProductPart: ProductPart = {
+        id: crypto.randomUUID(),
+        partId: savedPart.id,
+        positionLabel: nextLabel,
+        x: 0,
+        y: 0,
+      };
+      updateProduct(product.id, { parts: [...product.parts, newProductPart] });
+      setNewPartForm({
+        partNumber: '',
+        name: '',
+        description: '',
+        category: '',
+        quantityInStock: 0,
+        minimumStock: 0,
+        unitCost: 0,
+      });
+      setShowCreatePartForm(false);
+      setShowPartModal(false);
+    } catch (err) {
+      console.error('Failed to create part:', err);
+    } finally {
+      setIsCreatingPart(false);
+    }
   };
 
   const handleDeleteHotspot = (hotspotId: string) => {
@@ -497,7 +506,7 @@ export default function ProductDetail() {
         title="Add Part to Product"
         size="lg"
       >
-        {!showCreatePartForm ? (
+        {!showCreatePartForm && parts.length > 0 ? (
           <div className="space-y-4">
             <div className="relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
@@ -512,7 +521,7 @@ export default function ProductDetail() {
 
             <div className="max-h-64 overflow-y-auto border border-gray-200 rounded-lg divide-y divide-gray-100">
               {filteredParts.length === 0 ? (
-                <div className="p-4 text-center text-gray-500 text-sm">No parts found</div>
+                <div className="p-4 text-center text-gray-500 text-sm">No parts match your search</div>
               ) : (
                 filteredParts.map((part) => (
                   <label
@@ -569,13 +578,15 @@ export default function ProductDetail() {
           </div>
         ) : (
           <form onSubmit={handleCreateAndAddPart} className="space-y-4">
-            <button
-              type="button"
-              onClick={() => setShowCreatePartForm(false)}
-              className="text-sm text-gray-500 hover:text-gray-700 flex items-center gap-1"
-            >
-              <ArrowLeft size={14} /> Back to search
-            </button>
+            {parts.length > 0 && (
+              <button
+                type="button"
+                onClick={() => setShowCreatePartForm(false)}
+                className="text-sm text-gray-500 hover:text-gray-700 flex items-center gap-1"
+              >
+                <ArrowLeft size={14} /> Back to search
+              </button>
+            )}
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Part Number</label>
@@ -666,9 +677,10 @@ export default function ProductDetail() {
               </button>
               <button
                 type="submit"
-                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+                disabled={isCreatingPart}
+                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
               >
-                Create & Add Part
+                {isCreatingPart ? 'Creating...' : 'Create & Add Part'}
               </button>
             </div>
           </form>

@@ -15,9 +15,10 @@ import {
   SquareCheck,
   Square,
   CircleDot,
+  Archive,
 } from 'lucide-react';
 import { useApp } from '../data/store';
-import type { InternalOrder, InternalOrderStatus, InternalOrderPriority } from '../types';
+import type { InternalOrder, InternalOrderStatus } from '../types';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -36,6 +37,12 @@ function truncateId(id: string): string {
   return id.length > 8 ? id.slice(0, 8).toUpperCase() : id.toUpperCase();
 }
 
+function isToday(dateStr: string): boolean {
+  const d = new Date(dateStr);
+  const now = new Date();
+  return d.toDateString() === now.toDateString();
+}
+
 // ── Status styles ────────────────────────────────────────────────────────────
 
 const statusConfig: Record<InternalOrderStatus, { label: string; bg: string; text: string }> = {
@@ -46,32 +53,7 @@ const statusConfig: Record<InternalOrderStatus, { label: string; bg: string; tex
   cancelled: { label: 'Cancelled', bg: 'bg-gray-100', text: 'text-gray-600' },
 };
 
-const priorityConfig: Record<InternalOrderPriority, { label: string; border: string; bgTint: string; badge: string; badgeText: string }> = {
-  critical: {
-    label: 'Critical',
-    border: 'border-l-red-500',
-    bgTint: 'bg-red-50/60',
-    badge: 'bg-red-100',
-    badgeText: 'text-red-800',
-  },
-  urgent: {
-    label: 'Urgent',
-    border: 'border-l-amber-500',
-    bgTint: 'bg-amber-50/40',
-    badge: 'bg-amber-100',
-    badgeText: 'text-amber-800',
-  },
-  normal: {
-    label: 'Normal',
-    border: 'border-l-blue-400',
-    bgTint: '',
-    badge: 'bg-blue-100',
-    badgeText: 'text-blue-800',
-  },
-};
-
-type StatusFilter = 'all' | InternalOrderStatus;
-type PriorityFilter = 'all' | 'critical' | 'urgent+';
+type StatusFilter = 'active' | 'all' | InternalOrderStatus;
 
 // ── Component ────────────────────────────────────────────────────────────────
 
@@ -86,8 +68,7 @@ export default function RunnerQueue() {
     users,
   } = useApp();
 
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
-  const [priorityFilter, setPriorityFilter] = useState<PriorityFilter>('all');
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('active');
   const [myAssignmentsOnly, setMyAssignmentsOnly] = useState(false);
   const [expandedOrderId, setExpandedOrderId] = useState<string | null>(null);
   const [, setPulledItems] = useState<Record<string, Set<number>>>({});
@@ -99,6 +80,23 @@ export default function RunnerQueue() {
     return user?.name ?? 'Unknown';
   };
 
+  // Active orders = not completed, not cancelled
+  const activeOrders = useMemo(() => {
+    return internalOrders.filter(o => o.status !== 'completed' && o.status !== 'cancelled');
+  }, [internalOrders]);
+
+  // Completed today (for "today's completed" count)
+  const completedToday = useMemo(() => {
+    return internalOrders.filter(o => o.status === 'completed' && o.deliveredAt && isToday(o.deliveredAt));
+  }, [internalOrders]);
+
+  // Archived = completed more than today (auto-archived)
+  const archivedOrders = useMemo(() => {
+    return internalOrders.filter(o =>
+      o.status === 'completed' && (!o.deliveredAt || !isToday(o.deliveredAt))
+    );
+  }, [internalOrders]);
+
   const counts = useMemo(() => {
     const c = { new: 0, pulling: 0, delivering: 0, completed: 0, cancelled: 0 };
     for (const o of internalOrders) {
@@ -107,19 +105,24 @@ export default function RunnerQueue() {
     return c;
   }, [internalOrders]);
 
-  const filteredOrders = useMemo(() => {
-    let list = [...internalOrders];
-
-    // Status filter
-    if (statusFilter !== 'all') {
-      list = list.filter((o) => o.status === statusFilter);
+  const activeCounts = useMemo(() => {
+    const c = { new: 0, pulling: 0, delivering: 0 };
+    for (const o of activeOrders) {
+      if (o.status in c) c[o.status as keyof typeof c]++;
     }
+    return c;
+  }, [activeOrders]);
 
-    // Priority filter
-    if (priorityFilter === 'critical') {
-      list = list.filter((o) => o.priority === 'critical');
-    } else if (priorityFilter === 'urgent+') {
-      list = list.filter((o) => o.priority === 'critical' || o.priority === 'urgent');
+  const filteredOrders = useMemo(() => {
+    let list: InternalOrder[];
+
+    if (statusFilter === 'active') {
+      // Show active orders + today's completed
+      list = [...activeOrders, ...completedToday];
+    } else if (statusFilter === 'all') {
+      list = [...internalOrders];
+    } else {
+      list = internalOrders.filter(o => o.status === statusFilter);
     }
 
     // My assignments
@@ -127,16 +130,11 @@ export default function RunnerQueue() {
       list = list.filter((o) => o.assignedRunner === currentUser.id);
     }
 
-    // Sort: critical first, then urgent, then normal; within same priority, newest first
-    const priorityWeight: Record<InternalOrderPriority, number> = { critical: 0, urgent: 1, normal: 2 };
-    list.sort((a, b) => {
-      const pw = priorityWeight[a.priority] - priorityWeight[b.priority];
-      if (pw !== 0) return pw;
-      return new Date(b.requestedAt).getTime() - new Date(a.requestedAt).getTime();
-    });
+    // Sort: newest first (all are urgent now)
+    list.sort((a, b) => new Date(b.requestedAt).getTime() - new Date(a.requestedAt).getTime());
 
     return list;
-  }, [internalOrders, statusFilter, priorityFilter, myAssignmentsOnly, currentUser]);
+  }, [internalOrders, activeOrders, completedToday, statusFilter, myAssignmentsOnly, currentUser]);
 
   // ── Actions ──────────────────────────────────────────────────────────────
 
@@ -146,7 +144,6 @@ export default function RunnerQueue() {
   };
 
   const handleToggleItemPulled = (orderId: string, itemIndex: number, order: InternalOrder) => {
-    // Track locally which items are toggled
     setPulledItems((prev) => {
       const set = new Set(prev[orderId] ?? []);
       if (set.has(itemIndex)) {
@@ -157,7 +154,6 @@ export default function RunnerQueue() {
       return { ...prev, [orderId]: set };
     });
 
-    // Update the item in the order
     const updatedItems = order.items.map((item, idx) => {
       if (idx === itemIndex) {
         const nowPulled = !item.pulled;
@@ -179,7 +175,6 @@ export default function RunnerQueue() {
       quantityPulled: item.quantityRequested,
     }));
     updateInternalOrder(order.id, { items: updatedItems });
-    // Update local tracking
     const allIndices = new Set(order.items.map((_, i) => i));
     setPulledItems((prev) => ({ ...prev, [order.id]: allIndices }));
   };
@@ -350,39 +345,34 @@ export default function RunnerQueue() {
   // ── Render order card ────────────────────────────────────────────────────
 
   const renderOrderCard = (order: InternalOrder) => {
-    const pri = priorityConfig[order.priority];
     const stat = statusConfig[order.status];
     const isExpanded = expandedOrderId === order.id;
     const isCompleted = order.status === 'completed' || order.status === 'cancelled';
     const isNew = order.status === 'new';
-    const isCritical = order.priority === 'critical';
     const isMyOrder = currentUser && order.assignedRunner === currentUser.id;
 
     return (
       <div
         key={order.id}
         className={`
-          border-l-4 ${pri.border} rounded-lg border border-gray-200 shadow-sm transition-all
-          ${pri.bgTint}
+          border-l-4 border-l-amber-500 rounded-lg border border-gray-200 shadow-sm transition-all
           ${isCompleted ? 'opacity-60' : ''}
           ${isNew && !isCompleted ? 'ring-1 ring-sky-300 animate-pulse-subtle' : ''}
-          ${isCritical && !isCompleted ? 'ring-1 ring-red-300' : ''}
         `}
       >
-        {/* Card header — clickable to expand */}
+        {/* Card header -- clickable to expand */}
         <div
           className="p-4 cursor-pointer hover:bg-black/[0.02] transition-colors"
           onClick={() => toggleExpand(order.id)}
         >
           <div className="flex items-start justify-between gap-4">
-            {/* Left: Priority + info */}
+            {/* Left: info */}
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2 flex-wrap mb-1">
-                {/* Priority badge */}
-                <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${pri.badge} ${pri.badgeText} flex items-center gap-1`}>
-                  {order.priority === 'critical' && <Flame className="w-3 h-3" />}
-                  {order.priority === 'urgent' && <AlertTriangle className="w-3 h-3" />}
-                  {pri.label}
+                {/* Urgent badge (all orders are urgent) */}
+                <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 flex items-center gap-1">
+                  <AlertTriangle className="w-3 h-3" />
+                  Urgent
                 </span>
                 {/* Status badge */}
                 <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${stat.bg} ${stat.text}`}>
@@ -475,7 +465,6 @@ export default function RunnerQueue() {
                     <div className="flex items-start justify-between gap-4">
                       <div className="flex-1">
                         <div className="flex items-center gap-2 mb-2">
-                          {/* Pulled checkbox (only when pulling and assigned to current user) */}
                           {isPullingStatus && (
                             <button
                               onClick={(e) => {
@@ -511,7 +500,6 @@ export default function RunnerQueue() {
                           {renderStockStatus(item.partId, item.quantityRequested)}
                         </div>
 
-                        {/* Large location display */}
                         {renderLocationLarge(item.warehouseLocationId)}
                       </div>
                     </div>
@@ -542,22 +530,34 @@ export default function RunnerQueue() {
           <ClipboardList className="w-7 h-7 text-blue-600" />
           Part Runner Queue
         </h1>
-        <p className="text-gray-500 mt-1">Pull and deliver parts to workstations</p>
+        <p className="text-gray-500 mt-1">Pull and deliver parts to workstations. All orders are urgent.</p>
 
         {/* Stats bar */}
         <div className="flex items-center gap-3 mt-4">
           <div className="flex items-center gap-1.5 bg-sky-100 text-sky-800 px-3 py-1.5 rounded-lg text-sm font-semibold">
             <CircleDot className="w-4 h-4" />
-            {counts.new} New
+            {activeCounts.new} New
           </div>
           <div className="flex items-center gap-1.5 bg-amber-100 text-amber-800 px-3 py-1.5 rounded-lg text-sm font-semibold">
             <Package className="w-4 h-4" />
-            {counts.pulling} Pulling
+            {activeCounts.pulling} Pulling
           </div>
           <div className="flex items-center gap-1.5 bg-purple-100 text-purple-800 px-3 py-1.5 rounded-lg text-sm font-semibold">
             <Truck className="w-4 h-4" />
-            {counts.delivering} Delivering
+            {activeCounts.delivering} Delivering
           </div>
+          {completedToday.length > 0 && (
+            <div className="flex items-center gap-1.5 bg-green-100 text-green-800 px-3 py-1.5 rounded-lg text-sm font-semibold">
+              <CheckCircle2 className="w-4 h-4" />
+              {completedToday.length} Completed Today
+            </div>
+          )}
+          {archivedOrders.length > 0 && (
+            <div className="flex items-center gap-1.5 bg-gray-100 text-gray-600 px-3 py-1.5 rounded-lg text-sm font-semibold">
+              <Archive className="w-4 h-4" />
+              {archivedOrders.length} Archived
+            </div>
+          )}
         </div>
       </div>
 
@@ -565,20 +565,20 @@ export default function RunnerQueue() {
       <div className="flex flex-wrap items-center gap-3 bg-gray-50 border border-gray-200 rounded-xl p-3">
         {/* Status filters */}
         <div className="flex items-center gap-1.5">
-          <FilterButton active={statusFilter === 'all'} onClick={() => setStatusFilter('all')} count={internalOrders.length}>
-            All
+          <FilterButton active={statusFilter === 'active'} onClick={() => setStatusFilter('active')} count={activeOrders.length + completedToday.length}>
+            Active
           </FilterButton>
-          <FilterButton active={statusFilter === 'new'} onClick={() => setStatusFilter('new')} count={counts.new} countColor="bg-sky-100 text-sky-700">
+          <FilterButton active={statusFilter === 'new'} onClick={() => setStatusFilter('new')} count={activeCounts.new} countColor="bg-sky-100 text-sky-700">
             New
           </FilterButton>
-          <FilterButton active={statusFilter === 'pulling'} onClick={() => setStatusFilter('pulling')} count={counts.pulling} countColor="bg-amber-100 text-amber-700">
+          <FilterButton active={statusFilter === 'pulling'} onClick={() => setStatusFilter('pulling')} count={activeCounts.pulling} countColor="bg-amber-100 text-amber-700">
             Pulling
           </FilterButton>
-          <FilterButton active={statusFilter === 'delivering'} onClick={() => setStatusFilter('delivering')} count={counts.delivering} countColor="bg-purple-100 text-purple-700">
+          <FilterButton active={statusFilter === 'delivering'} onClick={() => setStatusFilter('delivering')} count={activeCounts.delivering} countColor="bg-purple-100 text-purple-700">
             Delivering
           </FilterButton>
-          <FilterButton active={statusFilter === 'completed'} onClick={() => setStatusFilter('completed')} count={counts.completed} countColor="bg-green-100 text-green-700">
-            Completed
+          <FilterButton active={statusFilter === 'all'} onClick={() => setStatusFilter('all')} count={internalOrders.length}>
+            All (incl. archived)
           </FilterButton>
         </div>
 
@@ -597,25 +597,6 @@ export default function RunnerQueue() {
           <User className="w-3.5 h-3.5" />
           My Assignments
         </button>
-
-        {/* Separator */}
-        <div className="w-px h-6 bg-gray-300" />
-
-        {/* Priority filter */}
-        <div className="flex items-center gap-1.5">
-          <Filter className="w-4 h-4 text-gray-400" />
-          <FilterButton active={priorityFilter === 'all'} onClick={() => setPriorityFilter('all')}>
-            All Priorities
-          </FilterButton>
-          <FilterButton active={priorityFilter === 'critical'} onClick={() => setPriorityFilter('critical')}>
-            <Flame className="w-3.5 h-3.5" />
-            Critical Only
-          </FilterButton>
-          <FilterButton active={priorityFilter === 'urgent+'} onClick={() => setPriorityFilter('urgent+')}>
-            <AlertTriangle className="w-3.5 h-3.5" />
-            Urgent+
-          </FilterButton>
-        </div>
       </div>
 
       {/* Order queue */}

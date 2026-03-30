@@ -8,8 +8,6 @@ import {
   Send,
   CheckCircle,
   AlertTriangle,
-  Zap,
-  Clock,
   ScanBarcode,
   MapPin,
   Package,
@@ -17,9 +15,13 @@ import {
   Wrench,
   Layers,
   ChevronRight,
+  Loader2,
+  ExternalLink,
 } from 'lucide-react';
 import { useApp } from '../data/store';
+import { useNavigate } from 'react-router-dom';
 import type { InternalOrderItem, Part } from '../types';
+import { lookupLPN, saveLPNRecord } from '../data/odooApi';
 
 interface CartItem {
   part: Part;
@@ -39,29 +41,34 @@ export default function PartRequest() {
     getWarehouseLocationById,
     getPartById,
     users,
+    addProduct,
   } = useApp();
+
+  const navigate = useNavigate();
 
   // Form state
   const [workstation, setWorkstation] = useState('');
-  const [priority, setPriority] = useState<'normal' | 'urgent' | 'critical'>('normal');
   const [notes, setNotes] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
-  const [quickScan, setQuickScan] = useState('');
   const [productSearchQuery, setProductSearchQuery] = useState('');
   const [selectedProductId, setSelectedProductId] = useState<string | null>(null);
   const [cart, setCart] = useState<CartItem[]>([]);
 
+  // LPN scan state
+  const [scanInput, setScanInput] = useState('');
+  const [scanLoading, setScanLoading] = useState(false);
+  const [scanResult, setScanResult] = useState<{
+    type: 'found' | 'odoo' | 'not_found';
+    message: string;
+    productId?: string;
+    productName?: string;
+    odooData?: any;
+  } | null>(null);
+
   // UI state
   const [submitted, setSubmitted] = useState(false);
   const [lastOrder, setLastOrder] = useState<{ id: string; itemCount: number } | null>(null);
-  const quickScanRef = useRef<HTMLInputElement>(null);
-  const searchRef = useRef<HTMLInputElement>(null);
-
-  // Search results
-  const searchResults = useMemo(() => {
-    if (!searchQuery.trim()) return [];
-    return searchParts(searchQuery).slice(0, 20);
-  }, [searchQuery, searchParts]);
+  const scanRef = useRef<HTMLInputElement>(null);
 
   // Product search results
   const productSearchResults = useMemo(() => {
@@ -78,6 +85,12 @@ export default function PartRequest() {
       .map((pp) => getPartById(pp.partId))
       .filter((p): p is NonNullable<typeof p> => !!p);
   }, [selectedProductId, getProductById, getPartById]);
+
+  // Search Parts results (fuzzy search)
+  const searchResults = useMemo(() => {
+    if (!searchQuery.trim()) return [];
+    return searchParts(searchQuery).slice(0, 20);
+  }, [searchQuery, searchParts]);
 
   // My past requests
   const myRequests = useMemo(() => {
@@ -97,6 +110,84 @@ export default function PartRequest() {
     const loc = getWarehouseLocationById(locationId);
     return loc ? loc.name : locationId;
   };
+
+  // ── LPN / Identifier Scan ─────────────────────────────────────────────────
+
+  async function handleScan() {
+    const trimmed = scanInput.trim();
+    if (!trimmed) return;
+    setScanLoading(true);
+    setScanResult(null);
+
+    // First try local match (ASIN, UPC, model, name)
+    const localMatch = products.find(
+      (p) =>
+        p.asin.toLowerCase() === trimmed.toLowerCase() ||
+        p.upc.toLowerCase() === trimmed.toLowerCase() ||
+        p.model.toLowerCase() === trimmed.toLowerCase()
+    );
+
+    if (localMatch) {
+      setSelectedProductId(localMatch.id);
+      setProductSearchQuery(localMatch.name);
+      setScanResult({ type: 'found', message: `Found: ${localMatch.name}`, productId: localMatch.id });
+      setScanInput('');
+      setScanLoading(false);
+      return;
+    }
+
+    // Try LPN lookup via Odoo
+    try {
+      const result = await lookupLPN(trimmed);
+      if (result.found) {
+        const localProd = result.localProduct || result.matchingLocalProduct;
+        if (localProd) {
+          setSelectedProductId(localProd.id);
+          setProductSearchQuery(localProd.name);
+          setScanResult({ type: 'found', message: `Found: ${localProd.name}`, productId: localProd.id });
+          setScanInput('');
+          // Save LPN record
+          saveLPNRecord({ lpn: trimmed, productId: localProd.id }).catch(() => {});
+        } else if (result.odooData) {
+          setScanResult({
+            type: 'odoo',
+            message: `Found "${result.odooData.productName}" in Odoo, but it doesn't exist in Parts Inventory yet.`,
+            productName: result.odooData.productName,
+            odooData: result.odooData,
+          });
+        }
+      } else {
+        setScanResult({ type: 'not_found', message: `No product found for "${trimmed}".` });
+      }
+    } catch {
+      setScanResult({ type: 'not_found', message: `Could not look up "${trimmed}". Odoo may be unavailable.` });
+    } finally {
+      setScanLoading(false);
+    }
+  }
+
+  function handleCreateFromOdoo() {
+    if (!scanResult?.odooData) return;
+    const od = scanResult.odooData;
+    const newProduct = addProduct({
+      name: od.productName || od.product?.name || 'Unknown Product',
+      model: '',
+      asin: od.productRef || od.product?.defaultCode || '',
+      upc: '',
+      manufacturer: '',
+      category: od.product?.category || '',
+      description: od.product?.description || '',
+      parts: [],
+    });
+    // Save LPN record linked to the new product
+    if (scanInput.trim()) {
+      saveLPNRecord({ lpn: scanInput.trim(), productId: newProduct.id }).catch(() => {});
+    }
+    setSelectedProductId(newProduct.id);
+    setProductSearchQuery(newProduct.name);
+    setScanResult({ type: 'found', message: `Created & selected: ${newProduct.name}`, productId: newProduct.id });
+    setScanInput('');
+  }
 
   // Cart helpers
   const addToCart = (part: Part) => {
@@ -127,31 +218,7 @@ export default function PartRequest() {
 
   const totalItems = cart.reduce((sum, c) => sum + c.quantity, 0);
 
-  // Quick scan handler
-  const handleQuickScan = () => {
-    const trimmed = quickScan.trim();
-    if (!trimmed) return;
-    const match = parts.find(
-      (p) => p.partNumber.toLowerCase() === trimmed.toLowerCase()
-    );
-    if (match) {
-      addToCart(match);
-      setQuickScan('');
-      quickScanRef.current?.focus();
-    } else {
-      // Try partial match
-      const partial = parts.find((p) =>
-        p.partNumber.toLowerCase().includes(trimmed.toLowerCase())
-      );
-      if (partial) {
-        addToCart(partial);
-        setQuickScan('');
-        quickScanRef.current?.focus();
-      }
-    }
-  };
-
-  // Submit
+  // Submit — all orders are "urgent"
   const handleSubmit = () => {
     if (!currentUser || cart.length === 0 || !workstation.trim()) return;
 
@@ -169,7 +236,7 @@ export default function PartRequest() {
       requestedBy: currentUser.id,
       workstation: workstation.trim(),
       items,
-      priority,
+      priority: 'urgent', // All orders are urgent
       status: 'new',
       notes: notes.trim(),
     });
@@ -181,9 +248,11 @@ export default function PartRequest() {
     setTimeout(() => {
       setCart([]);
       setNotes('');
-      setPriority('normal');
       setSearchQuery('');
-      setQuickScan('');
+      setScanInput('');
+      setScanResult(null);
+      setSelectedProductId(null);
+      setProductSearchQuery('');
       setSubmitted(false);
       setLastOrder(null);
     }, 3000);
@@ -197,12 +266,6 @@ export default function PartRequest() {
     cancelled: 'bg-gray-100 text-gray-600',
   };
 
-  const priorityColors: Record<string, string> = {
-    normal: 'bg-blue-100 text-blue-800',
-    urgent: 'bg-amber-100 text-amber-800',
-    critical: 'bg-red-100 text-red-800',
-  };
-
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -213,7 +276,7 @@ export default function PartRequest() {
             Request Parts
           </h1>
           <p className="text-sm text-gray-500 mt-1">
-            Request parts for your workstation
+            Scan an LPN, ASIN, or UPC to find products and request parts
           </p>
         </div>
         {currentUser && (
@@ -233,17 +296,16 @@ export default function PartRequest() {
           <div>
             <p className="text-lg font-bold text-green-800">Request Submitted!</p>
             <p className="text-sm text-green-700">
-              Order {lastOrder.id} -- {lastOrder.itemCount} item(s) requested.
+              Order {lastOrder.id.slice(0, 8)} -- {lastOrder.itemCount} item(s) requested.
               A runner will be assigned shortly.
             </p>
           </div>
         </div>
       )}
 
-      {/* Workstation + Priority */}
-      <div className="bg-white rounded-xl border p-5 space-y-4">
+      {/* Workstation + Notes */}
+      <div className="bg-white rounded-xl border p-5">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {/* Workstation */}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
               Workstation / Bench
@@ -256,8 +318,6 @@ export default function PartRequest() {
               className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
             />
           </div>
-
-          {/* Notes */}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
               Notes (optional)
@@ -271,94 +331,67 @@ export default function PartRequest() {
             />
           </div>
         </div>
-
-        {/* Priority selector */}
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-2">
-            Priority
-          </label>
-          <div className="grid grid-cols-3 gap-3">
-            <button
-              type="button"
-              onClick={() => setPriority('normal')}
-              className={`flex flex-col items-center gap-1 rounded-xl border-2 p-4 transition-all ${
-                priority === 'normal'
-                  ? 'border-blue-500 bg-blue-50 ring-2 ring-blue-200'
-                  : 'border-gray-200 hover:border-blue-300 hover:bg-blue-50/50'
-              }`}
-            >
-              <Clock className={`h-6 w-6 ${priority === 'normal' ? 'text-blue-600' : 'text-gray-400'}`} />
-              <span className={`text-sm font-semibold ${priority === 'normal' ? 'text-blue-700' : 'text-gray-600'}`}>
-                Normal
-              </span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setPriority('urgent')}
-              className={`flex flex-col items-center gap-1 rounded-xl border-2 p-4 transition-all ${
-                priority === 'urgent'
-                  ? 'border-amber-500 bg-amber-50 ring-2 ring-amber-200'
-                  : 'border-gray-200 hover:border-amber-300 hover:bg-amber-50/50'
-              }`}
-            >
-              <AlertTriangle className={`h-6 w-6 ${priority === 'urgent' ? 'text-amber-600' : 'text-gray-400'}`} />
-              <span className={`text-sm font-semibold ${priority === 'urgent' ? 'text-amber-700' : 'text-gray-600'}`}>
-                Urgent
-              </span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setPriority('critical')}
-              className={`flex flex-col items-center gap-1 rounded-xl border-2 p-4 transition-all ${
-                priority === 'critical'
-                  ? 'border-red-500 bg-red-50 ring-2 ring-red-200 animate-pulse'
-                  : 'border-gray-200 hover:border-red-300 hover:bg-red-50/50'
-              }`}
-            >
-              <Zap className={`h-6 w-6 ${priority === 'critical' ? 'text-red-600' : 'text-gray-400'}`} />
-              <span className={`text-sm font-semibold ${priority === 'critical' ? 'text-red-700' : 'text-gray-600'}`}>
-                Critical
-              </span>
-            </button>
-          </div>
-        </div>
       </div>
 
       {/* Part Selection + Cart */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Part Selection (left 2 cols) */}
         <div className="lg:col-span-2 space-y-4">
-          {/* Quick Scan */}
-          <div className="bg-white rounded-xl border p-4">
-            <label className="block text-sm font-medium text-gray-700 mb-2 flex items-center gap-1.5">
-              <ScanBarcode className="h-4 w-4 text-gray-400" />
-              Quick Scan / Part Number
+          {/* LPN / Identifier Scan */}
+          <div className="bg-indigo-50 rounded-xl border border-indigo-200 p-4">
+            <label className="block text-sm font-semibold text-indigo-800 mb-2 flex items-center gap-1.5">
+              <ScanBarcode className="h-4 w-4" />
+              Scan LPN / ASIN / UPC
             </label>
             <div className="flex gap-2">
               <input
-                ref={quickScanRef}
+                ref={scanRef}
                 type="text"
-                value={quickScan}
-                onChange={(e) => setQuickScan(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') handleQuickScan();
-                }}
-                placeholder="Type or scan part number and press Enter"
-                className="flex-1 px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm font-mono"
+                value={scanInput}
+                onChange={(e) => { setScanInput(e.target.value); setScanResult(null); }}
+                onKeyDown={(e) => { if (e.key === 'Enter') handleScan(); }}
+                placeholder="Scan LPN barcode, or type ASIN / UPC / model..."
+                className="flex-1 px-3 py-2 border border-indigo-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 text-sm font-mono bg-white"
+                autoFocus
               />
               <button
-                onClick={handleQuickScan}
-                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm font-medium flex items-center gap-1.5"
+                onClick={handleScan}
+                disabled={scanLoading || !scanInput.trim()}
+                className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 text-sm font-medium flex items-center gap-1.5 disabled:opacity-40 transition-colors"
               >
-                <Plus className="h-4 w-4" />
-                Add
+                {scanLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
+                Find
               </button>
             </div>
+
+            {/* Scan result */}
+            {scanResult && (
+              <div className={`mt-3 rounded-lg border p-3 ${
+                scanResult.type === 'found' ? 'bg-green-50 border-green-200' :
+                scanResult.type === 'odoo' ? 'bg-amber-50 border-amber-200' :
+                'bg-red-50 border-red-200'
+              }`}>
+                <p className={`text-sm font-medium ${
+                  scanResult.type === 'found' ? 'text-green-700' :
+                  scanResult.type === 'odoo' ? 'text-amber-700' :
+                  'text-red-700'
+                }`}>
+                  {scanResult.message}
+                </p>
+                {scanResult.type === 'odoo' && (
+                  <button
+                    onClick={handleCreateFromOdoo}
+                    className="mt-2 inline-flex items-center gap-1.5 px-3 py-1.5 bg-green-600 text-white rounded-lg text-sm font-medium hover:bg-green-700 transition-colors"
+                  >
+                    <Plus className="h-4 w-4" />
+                    Create Product from Odoo Data
+                  </button>
+                )}
+              </div>
+            )}
           </div>
 
-          {/* Product → Parts Drill-Down */}
+          {/* Product -> Parts Drill-Down */}
           <div className="bg-white rounded-xl border p-4">
             <label className="block text-sm font-medium text-gray-700 mb-2 flex items-center gap-1.5">
               <Layers className="h-4 w-4 text-gray-400" />
@@ -404,7 +437,7 @@ export default function PartRequest() {
                     {getProductById(selectedProductId)?.name} - Parts
                   </p>
                   <button
-                    onClick={() => setSelectedProductId(null)}
+                    onClick={() => { setSelectedProductId(null); setProductSearchQuery(''); }}
                     className="text-xs text-gray-500 hover:text-gray-700"
                   >
                     Clear
@@ -412,7 +445,10 @@ export default function PartRequest() {
                 </div>
                 <div className="border rounded-lg divide-y max-h-64 overflow-y-auto">
                   {selectedProductParts.length === 0 ? (
-                    <p className="text-sm text-gray-400 text-center py-4">No parts linked to this product</p>
+                    <div className="text-center py-6">
+                      <p className="text-sm text-gray-400">No parts linked to this product yet.</p>
+                      <p className="text-xs text-gray-400 mt-1">Parts need to be added to this product in the Products page.</p>
+                    </div>
                   ) : (
                     selectedProductParts.map((part) => (
                       <div
@@ -463,14 +499,13 @@ export default function PartRequest() {
             )}
           </div>
 
-          {/* Search */}
+          {/* Search Parts (fuzzy) */}
           <div className="bg-white rounded-xl border p-4">
             <label className="block text-sm font-medium text-gray-700 mb-2 flex items-center gap-1.5">
               <Search className="h-4 w-4 text-gray-400" />
               Search Parts
             </label>
             <input
-              ref={searchRef}
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
@@ -554,7 +589,7 @@ export default function PartRequest() {
               <div className="text-center py-8 text-gray-400">
                 <ShoppingCart className="h-8 w-8 mx-auto mb-2 opacity-50" />
                 <p className="text-sm">No parts added yet</p>
-                <p className="text-xs mt-1">Search or scan to add parts</p>
+                <p className="text-xs mt-1">Scan an identifier or search to add parts</p>
               </div>
             ) : (
               <div className="space-y-3">
@@ -655,7 +690,6 @@ export default function PartRequest() {
                   <th className="px-4 py-3 font-medium text-gray-500">Time</th>
                   <th className="px-4 py-3 font-medium text-gray-500">Workstation</th>
                   <th className="px-4 py-3 font-medium text-gray-500">Items</th>
-                  <th className="px-4 py-3 font-medium text-gray-500">Priority</th>
                   <th className="px-4 py-3 font-medium text-gray-500">Status</th>
                   <th className="px-4 py-3 font-medium text-gray-500">Runner</th>
                 </tr>
@@ -680,15 +714,6 @@ export default function PartRequest() {
                     <td className="px-4 py-3 text-gray-600">
                       {order.items.reduce((s, i) => s + i.quantityRequested, 0)} part
                       {order.items.reduce((s, i) => s + i.quantityRequested, 0) !== 1 ? 's' : ''}
-                    </td>
-                    <td className="px-4 py-3">
-                      <span
-                        className={`inline-block px-2 py-0.5 rounded-full text-xs font-medium capitalize ${
-                          priorityColors[order.priority] || ''
-                        }`}
-                      >
-                        {order.priority}
-                      </span>
                     </td>
                     <td className="px-4 py-3">
                       <span

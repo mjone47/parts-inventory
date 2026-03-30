@@ -13,9 +13,9 @@ import {
   FileText,
   ScanBarcode,
   Search,
-  Camera,
   Zap,
   Loader2,
+  ExternalLink,
 } from 'lucide-react';
 import { useApp } from '../data/store';
 import Modal from '../components/Modal';
@@ -72,6 +72,7 @@ export default function Harvesting() {
     completeHarvestSession,
     adjustStock,
     addInventoryTransaction,
+    addProduct,
   } = useApp();
 
   const [showModal, setShowModal] = useState(false);
@@ -103,6 +104,7 @@ export default function Harvesting() {
   const [formLpn, setFormLpn] = useState('');
   const [lpnLoading, setLpnLoading] = useState(false);
   const [lpnMessage, setLpnMessage] = useState('');
+  const [lpnOdooData, setLpnOdooData] = useState<any>(null);
 
   // ── Helpers ───────────────────────────────────────────────────────────────
 
@@ -113,6 +115,7 @@ export default function Harvesting() {
     setFormNotes('');
     setFormLpn('');
     setLpnMessage('');
+    setLpnOdooData(null);
     setActiveSessionId(null);
     setHarvestRows([]);
   }
@@ -131,6 +134,8 @@ export default function Harvesting() {
     if (match) {
       setFormProductId(match.id);
       setScanInput('');
+      setLpnMessage(`Found: ${match.name}`);
+      setLpnOdooData(null);
     }
   }
 
@@ -139,21 +144,21 @@ export default function Harvesting() {
     if (!trimmed) return;
     setLpnLoading(true);
     setLpnMessage('');
+    setLpnOdooData(null);
     try {
       const result = await lookupLPN(trimmed);
       if (result.found) {
-        // Found — try to match to a local product
         const localProd = result.localProduct || result.matchingLocalProduct;
         if (localProd) {
           setFormProductId(localProd.id);
           setFormLpn(trimmed);
-          setFormSerial(trimmed); // Pre-fill serial with LPN
           setScanInput('');
           setLpnMessage(`Found: ${localProd.name}`);
         } else if (result.odooData) {
-          // Product exists in Odoo but not locally
+          // Product exists in Odoo but not locally - allow creating
           setFormLpn(trimmed);
-          setLpnMessage(`Found "${result.odooData.productName}" in Odoo, but it's not in the local system yet. Please add the product first.`);
+          setLpnOdooData(result.odooData);
+          setLpnMessage(`Found "${result.odooData.productName}" in Odoo, but not in the local system.`);
         }
       } else {
         setLpnMessage('LPN not found in Odoo.');
@@ -163,6 +168,29 @@ export default function Harvesting() {
     } finally {
       setLpnLoading(false);
     }
+  }
+
+  function handleCreateProductFromOdoo() {
+    if (!lpnOdooData) return;
+    const od = lpnOdooData;
+    const newProduct = addProduct({
+      name: od.productName || od.product?.name || 'Unknown Product',
+      model: '',
+      asin: od.productRef || od.product?.defaultCode || '',
+      upc: '',
+      manufacturer: '',
+      category: od.product?.category || '',
+      description: od.product?.description || '',
+      parts: [],
+    });
+    // Save LPN record
+    if (formLpn) {
+      saveLPNRecord({ lpn: formLpn, productId: newProduct.id }).catch(() => {});
+    }
+    setFormProductId(newProduct.id);
+    setLpnMessage(`Created: ${newProduct.name}`);
+    setLpnOdooData(null);
+    setScanInput('');
   }
 
   function handleAddAllToInventory() {
@@ -189,11 +217,14 @@ export default function Harvesting() {
     : products;
 
   async function handleCreateSession() {
-    if (!formProductId || !formSerial) return;
+    if (!formProductId) return;
+
+    // Use LPN as serial if no serial provided
+    const serial = formSerial.trim() || formLpn.trim() || 'N/A';
 
     const session = await addHarvestSessionAsync({
       productId: formProductId,
-      serialNumber: formSerial,
+      serialNumber: serial,
       condition: formCondition,
       notes: formNotes,
       harvestedParts: [],
@@ -227,6 +258,38 @@ export default function Harvesting() {
     }
 
     setActiveSessionId(session.id);
+  }
+
+  // Resume an in-progress session (re-open modal)
+  function handleResumeSession(sessionId: string) {
+    const session = harvestSessions.find(s => s.id === sessionId);
+    if (!session || session.status !== 'in_progress') return;
+
+    // Set form state from existing session
+    setFormProductId(session.productId);
+    setFormSerial(session.serialNumber);
+    setFormCondition(session.condition);
+    setFormNotes(session.notes);
+    setFormLpn(session.lpn || '');
+
+    // Build harvest rows from product parts, marking already-harvested ones
+    const product = getProductById(session.productId);
+    if (product) {
+      const harvestedPartIds = new Set(session.harvestedParts.map(hp => hp.partId));
+      setHarvestRows(
+        product.parts.map((pp) => ({
+          partId: pp.partId,
+          checked: harvestedPartIds.has(pp.partId),
+          quantity: session.harvestedParts.find(hp => hp.partId === pp.partId)?.quantity ?? 1,
+          condition: (session.harvestedParts.find(hp => hp.partId === pp.partId)?.condition ?? 'good') as HarvestedPart['condition'],
+          notes: session.harvestedParts.find(hp => hp.partId === pp.partId)?.notes ?? '',
+          added: harvestedPartIds.has(pp.partId),
+        })),
+      );
+    }
+
+    setActiveSessionId(sessionId);
+    setShowModal(true);
   }
 
   function handleAddToInventory(index: number) {
@@ -292,7 +355,7 @@ export default function Harvesting() {
             Harvesting
           </h1>
           <p className="mt-1 text-sm text-gray-500">
-            Track parts being harvested from products
+            Track parts being harvested from products. Click an in-progress session to resume.
           </p>
         </div>
         <button
@@ -312,7 +375,7 @@ export default function Harvesting() {
         {/* Header */}
         <div className="grid grid-cols-[2fr_1fr_1fr_1fr_auto_auto_28px] items-center gap-4 px-6 py-3 bg-gray-50 border-b border-gray-200">
           <span className="text-xs font-medium text-gray-500 uppercase tracking-wider">Product</span>
-          <span className="text-xs font-medium text-gray-500 uppercase tracking-wider">Serial #</span>
+          <span className="text-xs font-medium text-gray-500 uppercase tracking-wider">LPN / Serial</span>
           <span className="text-xs font-medium text-gray-500 uppercase tracking-wider">Date</span>
           <span className="text-xs font-medium text-gray-500 uppercase tracking-wider">Harvested By</span>
           <span className="text-xs font-medium text-gray-500 uppercase tracking-wider min-w-[100px]">Status</span>
@@ -330,20 +393,29 @@ export default function Harvesting() {
           const product = getProductById(session.productId);
           const userName = users.find((u) => u.id === session.harvestedBy)?.name ?? 'Unknown';
           const isExpanded = expandedId === session.id;
+          const isInProgress = session.status === 'in_progress';
 
           return (
             <div key={session.id} className="border-b border-gray-200 last:border-b-0">
               {/* Main row */}
               <div
-                className="grid grid-cols-[2fr_1fr_1fr_1fr_auto_auto_28px] items-center gap-4 px-6 py-4 cursor-pointer hover:bg-gray-50 transition-colors"
-                onClick={() => setExpandedId(isExpanded ? null : session.id)}
+                className={`grid grid-cols-[2fr_1fr_1fr_1fr_auto_auto_28px] items-center gap-4 px-6 py-4 cursor-pointer transition-colors ${
+                  isInProgress ? 'hover:bg-indigo-50 bg-indigo-50/30' : 'hover:bg-gray-50'
+                }`}
+                onClick={() => {
+                  if (isInProgress) {
+                    handleResumeSession(session.id);
+                  } else {
+                    setExpandedId(isExpanded ? null : session.id);
+                  }
+                }}
               >
-                <span className="text-sm font-medium text-gray-900">
+                <span className={`text-sm font-medium ${isInProgress ? 'text-indigo-900' : 'text-gray-900'}`}>
                   {product?.name ?? 'Unknown Product'}
                 </span>
                 <span className="text-sm text-gray-500 flex items-center gap-1">
                   <Hash size={14} className="shrink-0" />
-                  {session.serialNumber}
+                  {session.lpn || session.serialNumber}
                 </span>
                 <span className="text-sm text-gray-500 flex items-center gap-1">
                   <Calendar size={14} className="shrink-0" />
@@ -360,18 +432,30 @@ export default function Harvesting() {
                   {session.harvestedParts.length} part{session.harvestedParts.length !== 1 ? 's' : ''}
                 </span>
                 <span className="text-gray-400">
-                  {isExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                  {isInProgress ? (
+                    <span className="text-xs text-indigo-600 font-medium">Resume</span>
+                  ) : isExpanded ? (
+                    <ChevronUp size={16} />
+                  ) : (
+                    <ChevronDown size={16} />
+                  )}
                 </span>
               </div>
 
-              {/* Expanded detail */}
-              {isExpanded && (
+              {/* Expanded detail (only for completed sessions) */}
+              {isExpanded && !isInProgress && (
                 <div className="border-t border-gray-100 bg-gray-50 px-6 py-4 space-y-3">
                   <div className="grid grid-cols-3 gap-4 text-sm">
                     <div>
                       <span className="text-gray-500">Unit Condition:</span>{' '}
                       <ConditionBadge condition={session.condition} />
                     </div>
+                    {session.lpn && (
+                      <div>
+                        <span className="text-gray-500">LPN:</span>{' '}
+                        <span className="font-mono text-indigo-700 font-medium">{session.lpn}</span>
+                      </div>
+                    )}
                     {session.notes && (
                       <div className="col-span-2 flex items-start gap-1">
                         <FileText size={14} className="text-gray-400 mt-0.5" />
@@ -432,6 +516,8 @@ export default function Harvesting() {
       <Modal
         isOpen={showModal}
         onClose={() => {
+          // Don't close on backdrop click if there's an active session
+          if (activeSessionId) return;
           setShowModal(false);
           resetForm();
         }}
@@ -451,7 +537,7 @@ export default function Harvesting() {
                 <input
                   type="text"
                   value={scanInput}
-                  onChange={(e) => setScanInput(e.target.value)}
+                  onChange={(e) => { setScanInput(e.target.value); setLpnMessage(''); setLpnOdooData(null); }}
                   onKeyDown={(e) => { if (e.key === 'Enter') { handleLPNScan(); handleScan(); } }}
                   placeholder="Scan LPN, barcode, or type UPC/ASIN/model..."
                   className="flex-1 rounded-lg border border-indigo-300 px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white"
@@ -468,9 +554,18 @@ export default function Harvesting() {
                 </button>
               </div>
               {lpnMessage && (
-                <p className={`mt-2 text-sm ${lpnMessage.includes('Found:') ? 'text-green-600 font-medium' : 'text-amber-600'}`}>
-                  {lpnMessage}
-                </p>
+                <div className={`mt-2 ${lpnMessage.startsWith('Found:') || lpnMessage.startsWith('Created:') ? 'text-green-600' : 'text-amber-600'}`}>
+                  <p className="text-sm font-medium">{lpnMessage}</p>
+                  {lpnOdooData && (
+                    <button
+                      onClick={handleCreateProductFromOdoo}
+                      className="mt-2 inline-flex items-center gap-1.5 px-3 py-1.5 bg-green-600 text-white rounded-lg text-sm font-medium hover:bg-green-700 transition-colors"
+                    >
+                      <Plus size={14} />
+                      Create Product from Odoo Data
+                    </button>
+                  )}
+                </div>
               )}
             </div>
 
@@ -507,6 +602,7 @@ export default function Harvesting() {
                         <p className="text-sm font-medium text-gray-900 truncate">{p.name}</p>
                         <p className="text-xs text-gray-500">
                           {p.model} {p.asin ? `[${p.asin}]` : ''} {p.manufacturer ? `- ${p.manufacturer}` : ''}
+                          {p.parts.length === 0 && <span className="text-amber-500 ml-2">(no parts defined)</span>}
                         </p>
                       </div>
                     </label>
@@ -522,15 +618,26 @@ export default function Harvesting() {
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Serial Number</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Serial Number <span className="text-gray-400 font-normal">(optional)</span>
+              </label>
               <input
                 type="text"
                 value={formSerial}
                 onChange={(e) => setFormSerial(e.target.value)}
-                placeholder="Enter serial number of the unit"
+                placeholder="Enter serial number of the unit (optional - LPN will be used if blank)"
                 className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
               />
             </div>
+
+            {formLpn && (
+              <div className="bg-indigo-50 border border-indigo-200 rounded-lg p-3">
+                <p className="text-sm text-indigo-800">
+                  <span className="font-semibold">LPN:</span>{' '}
+                  <span className="font-mono">{formLpn}</span>
+                </p>
+              </div>
+            )}
 
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Unit Condition</label>
@@ -569,7 +676,7 @@ export default function Harvesting() {
               </button>
               <button
                 onClick={handleCreateSession}
-                disabled={!formProductId || !formSerial}
+                disabled={!formProductId}
                 className="px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
               >
                 Create Session
@@ -604,7 +711,10 @@ export default function Harvesting() {
             </div>
 
             {harvestRows.length === 0 ? (
-              <p className="text-sm text-gray-400 italic">This product has no parts defined.</p>
+              <div className="text-center py-8">
+                <p className="text-sm text-gray-400 italic">This product has no parts defined yet.</p>
+                <p className="text-xs text-gray-400 mt-1">Add parts to this product in the Products page, then resume this session.</p>
+              </div>
             ) : (
               <table className="w-full text-sm">
                 <thead>
@@ -691,15 +801,16 @@ export default function Harvesting() {
               </table>
             )}
 
-            <div className="flex justify-end gap-3 pt-2">
+            <div className="flex justify-between gap-3 pt-2">
               <button
                 onClick={() => {
+                  // Close but don't reset - session stays in progress and can be resumed
                   setShowModal(false);
                   resetForm();
                 }}
                 className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
               >
-                Close
+                Close (keep in progress)
               </button>
               <button
                 onClick={handleCompleteSession}

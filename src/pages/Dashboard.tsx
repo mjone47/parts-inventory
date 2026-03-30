@@ -10,6 +10,7 @@ import {
   RefreshCw,
   Trash2,
   MoveRight,
+  PackageX,
 } from 'lucide-react';
 import { useApp } from '../data/store';
 import type { InventoryTransaction, HarvestSession, Order } from '../types';
@@ -91,6 +92,7 @@ function formatCurrency(value: number): string {
 const Dashboard: React.FC = () => {
   const {
     parts,
+    products,
     harvestSessions,
     orders,
     inventoryTransactions,
@@ -119,6 +121,12 @@ const Dashboard: React.FC = () => {
   const pendingOrderCount = useMemo(
     () => orders.filter((o) => o.status !== 'received' && o.status !== 'cancelled').length,
     [orders],
+  );
+
+  // Products with no parts assigned
+  const productsWithNoParts = useMemo(
+    () => products.filter((p) => p.parts.length === 0),
+    [products],
   );
 
   // ── Recent data ─────────────────────────────────────────────────────────────
@@ -214,6 +222,21 @@ const Dashboard: React.FC = () => {
             </div>
           </div>
         </div>
+
+        {/* Products with No Parts */}
+        {productsWithNoParts.length > 0 && (
+          <div className="rounded-xl bg-white p-5 shadow-sm border-l-4 border-l-amber-400">
+            <div className="flex items-center gap-4">
+              <div className="flex h-12 w-12 items-center justify-center rounded-full bg-amber-100">
+                <PackageX className="h-6 w-6 text-amber-600" />
+              </div>
+              <div>
+                <p className="text-2xl font-semibold text-gray-900">{productsWithNoParts.length}</p>
+                <p className="text-sm text-gray-500">Products with No Parts</p>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* ── Row 2: Recent Harvests & Recent Orders ─────────────────────────── */}
@@ -410,6 +433,48 @@ const Dashboard: React.FC = () => {
           </div>
         </div>
       </div>
+      {/* ── Row 4: Products with No Parts ─────────────────────────────── */}
+      {productsWithNoParts.length > 0 && (
+        <div className="rounded-xl bg-white shadow-sm">
+          <div className="flex items-center justify-between border-b px-5 py-4">
+            <h2 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
+              <PackageX className="h-5 w-5 text-amber-500" />
+              Products with No Parts Assigned
+            </h2>
+            <Link
+              to="/products"
+              className="text-sm font-medium text-blue-600 hover:text-blue-800"
+            >
+              Manage products
+            </Link>
+          </div>
+          <div className="divide-y">
+            {productsWithNoParts.slice(0, 10).map((product) => (
+              <div key={product.id} className="flex items-center justify-between px-5 py-3">
+                <div className="min-w-0 flex-1">
+                  <p className="truncate font-medium text-gray-900">{product.name}</p>
+                  <p className="text-xs text-gray-500">
+                    {product.model && <span>Model: {product.model}</span>}
+                    {product.asin && <span className="ml-2">ASIN: {product.asin}</span>}
+                    {product.category && <span className="ml-2">Category: {product.category}</span>}
+                  </p>
+                </div>
+                <Link
+                  to={`/products/${product.id}`}
+                  className="ml-4 shrink-0 rounded-lg bg-amber-100 px-3 py-1.5 text-xs font-medium text-amber-800 hover:bg-amber-200 focus:outline-none focus:ring-2 focus:ring-amber-500 focus:ring-offset-1"
+                >
+                  Add Parts
+                </Link>
+              </div>
+            ))}
+            {productsWithNoParts.length > 10 && (
+              <div className="px-5 py-3 text-center text-sm text-gray-400">
+                +{productsWithNoParts.length - 10} more products without parts
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 };

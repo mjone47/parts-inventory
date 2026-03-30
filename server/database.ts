@@ -214,18 +214,38 @@ export function initializeDatabase(): Database.Database {
     );
   `);
 
+  // ── LPN Records table ────────────────────────────────────────────────────
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS lpn_records (
+      id TEXT PRIMARY KEY,
+      lpn TEXT NOT NULL UNIQUE,
+      product_id TEXT,
+      odoo_lot_id INTEGER,
+      odoo_product_id INTEGER,
+      odoo_product_name TEXT NOT NULL DEFAULT '',
+      odoo_product_ref TEXT NOT NULL DEFAULT '',
+      first_seen_at TEXT NOT NULL,
+      last_seen_at TEXT NOT NULL,
+      notes TEXT NOT NULL DEFAULT '',
+      FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE SET NULL
+    );
+  `);
+
   // ── Migrations for existing databases ────────────────────────────────────
   const migrate = (sql: string) => {
-    try { database.exec(sql); } catch { /* column already exists */ }
+    try { database.exec(sql); } catch { /* column/index already exists */ }
   };
   migrate('ALTER TABLE parts ADD COLUMN qty_new INTEGER NOT NULL DEFAULT 0');
   migrate('ALTER TABLE parts ADD COLUMN qty_like_new INTEGER NOT NULL DEFAULT 0');
   migrate('ALTER TABLE parts ADD COLUMN qty_good INTEGER NOT NULL DEFAULT 0');
   migrate('ALTER TABLE parts ADD COLUMN qty_fair INTEGER NOT NULL DEFAULT 0');
   migrate('ALTER TABLE parts ADD COLUMN qty_poor INTEGER NOT NULL DEFAULT 0');
+  migrate('ALTER TABLE harvest_sessions ADD COLUMN lpn TEXT NOT NULL DEFAULT \'\'');
 
-  // Unique index on part_number (for existing DBs that didn't have UNIQUE)
+  // Indexes
   migrate('CREATE UNIQUE INDEX IF NOT EXISTS idx_parts_part_number ON parts(part_number)');
+  migrate('CREATE INDEX IF NOT EXISTS idx_lpn_records_lpn ON lpn_records(lpn)');
+  migrate('CREATE INDEX IF NOT EXISTS idx_harvest_sessions_lpn ON harvest_sessions(lpn)');
 
   db = database;
   return database;

@@ -86,6 +86,47 @@ export interface HarvestSession {
   harvestedBy: string; // user ID
   date: string;
   status: 'in_progress' | 'completed';
+  lpn?: string; // Odoo LPN for chain of custody tracking
+}
+
+// ── Odoo / LPN types ──────────────────────────────────────────────────────────
+
+export interface LPNRecord {
+  id: string;
+  lpn: string;
+  productId?: string;
+  odooLotId?: number;
+  odooProductId?: number;
+  odooProductName: string;
+  odooProductRef: string;
+  firstSeenAt: string;
+  lastSeenAt: string;
+  notes: string;
+}
+
+export interface OdooLPNLookupResult {
+  found: boolean;
+  source?: 'local' | 'odoo';
+  odooAvailable?: boolean;
+  lpnRecord?: LPNRecord;
+  odooData?: {
+    lotId: number;
+    lpn: string;
+    productId: number;
+    productName: string;
+    productRef: string;
+    product?: {
+      productId: number;
+      name: string;
+      defaultCode: string;
+      barcode: string | false;
+      category: string;
+      description: string;
+      listPrice: number;
+    };
+  };
+  localProduct?: { id: string; name: string; model: string };
+  matchingLocalProduct?: { id: string; name: string; model: string };
 }
 
 export interface HarvestedPart {

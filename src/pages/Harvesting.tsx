@@ -15,10 +15,12 @@ import {
   Search,
   Camera,
   Zap,
+  Loader2,
 } from 'lucide-react';
 import { useApp } from '../data/store';
 import Modal from '../components/Modal';
 import type { HarvestedPart } from '../types';
+import { lookupLPN, saveLPNRecord } from '../data/odooApi';
 
 // ── Status badge ──────────────────────────────────────────────────────────────
 
@@ -98,6 +100,9 @@ export default function Harvesting() {
 
   const [productSearch, setProductSearch] = useState('');
   const [scanInput, setScanInput] = useState('');
+  const [formLpn, setFormLpn] = useState('');
+  const [lpnLoading, setLpnLoading] = useState(false);
+  const [lpnMessage, setLpnMessage] = useState('');
 
   // ── Helpers ───────────────────────────────────────────────────────────────
 
@@ -106,6 +111,8 @@ export default function Harvesting() {
     setFormSerial('');
     setFormCondition('good');
     setFormNotes('');
+    setFormLpn('');
+    setLpnMessage('');
     setActiveSessionId(null);
     setHarvestRows([]);
   }
@@ -124,6 +131,37 @@ export default function Harvesting() {
     if (match) {
       setFormProductId(match.id);
       setScanInput('');
+    }
+  }
+
+  async function handleLPNScan() {
+    const trimmed = scanInput.trim();
+    if (!trimmed) return;
+    setLpnLoading(true);
+    setLpnMessage('');
+    try {
+      const result = await lookupLPN(trimmed);
+      if (result.found) {
+        // Found — try to match to a local product
+        const localProd = result.localProduct || result.matchingLocalProduct;
+        if (localProd) {
+          setFormProductId(localProd.id);
+          setFormLpn(trimmed);
+          setFormSerial(trimmed); // Pre-fill serial with LPN
+          setScanInput('');
+          setLpnMessage(`Found: ${localProd.name}`);
+        } else if (result.odooData) {
+          // Product exists in Odoo but not locally
+          setFormLpn(trimmed);
+          setLpnMessage(`Found "${result.odooData.productName}" in Odoo, but it's not in the local system yet. Please add the product first.`);
+        }
+      } else {
+        setLpnMessage('LPN not found in Odoo.');
+      }
+    } catch {
+      setLpnMessage('Failed to look up LPN.');
+    } finally {
+      setLpnLoading(false);
     }
   }
 
@@ -162,7 +200,16 @@ export default function Harvesting() {
       harvestedBy: currentUser?.id ?? '',
       date: new Date().toISOString(),
       status: 'in_progress',
+      lpn: formLpn || undefined,
     });
+
+    // Save LPN record if present
+    if (formLpn) {
+      saveLPNRecord({
+        lpn: formLpn,
+        productId: formProductId,
+      }).catch(() => { /* non-critical */ });
+    }
 
     // Build harvest rows from the product's parts list
     const product = getProductById(formProductId);
@@ -398,27 +445,33 @@ export default function Harvesting() {
             <div className="bg-indigo-50 border border-indigo-200 rounded-lg p-4">
               <label className="block text-sm font-semibold text-indigo-800 mb-2 flex items-center gap-1.5">
                 <ScanBarcode size={16} />
-                Quick Scan (UPC / ASIN / Model)
+                Quick Scan (LPN / UPC / ASIN / Model)
               </label>
               <div className="flex gap-2">
                 <input
                   type="text"
                   value={scanInput}
                   onChange={(e) => setScanInput(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === 'Enter') handleScan(); }}
-                  placeholder="Scan barcode or type UPC/ASIN/model..."
+                  onKeyDown={(e) => { if (e.key === 'Enter') { handleLPNScan(); handleScan(); } }}
+                  placeholder="Scan LPN, barcode, or type UPC/ASIN/model..."
                   className="flex-1 rounded-lg border border-indigo-300 px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white"
                   autoFocus
                 />
                 <button
                   type="button"
-                  onClick={handleScan}
-                  className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 text-sm font-medium flex items-center gap-1.5"
+                  onClick={() => { handleLPNScan(); handleScan(); }}
+                  disabled={lpnLoading}
+                  className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 text-sm font-medium flex items-center gap-1.5 disabled:opacity-40 transition-colors"
                 >
-                  <Search size={16} />
+                  {lpnLoading ? <Loader2 size={16} className="animate-spin" /> : <Search size={16} />}
                   Find
                 </button>
               </div>
+              {lpnMessage && (
+                <p className={`mt-2 text-sm ${lpnMessage.includes('Found:') ? 'text-green-600 font-medium' : 'text-amber-600'}`}>
+                  {lpnMessage}
+                </p>
+              )}
             </div>
 
             {/* Product selection */}

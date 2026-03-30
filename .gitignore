@@ -12,6 +12,9 @@ dist
 dist-ssr
 *.local
 
+# Environment variables
+.env
+
 # Database
 server/data/*.db
 server/data/*.db-shm

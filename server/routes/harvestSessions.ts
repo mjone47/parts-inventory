@@ -13,6 +13,7 @@ interface SessionRow {
   harvested_by: string;
   date: string;
   status: string;
+  lpn: string;
 }
 
 interface HarvestedPartRow {
@@ -43,6 +44,7 @@ function formatSession(row: SessionRow, parts: HarvestedPartRow[]) {
     harvestedBy: row.harvested_by,
     date: row.date,
     status: row.status,
+    lpn: row.lpn || '',
   };
 }
 
@@ -67,12 +69,12 @@ router.get('/:id', (req, res) => {
 
 router.post('/', (req, res) => {
   const db = getDb();
-  const { productId, serialNumber, condition, notes, harvestedBy, date, status } = req.body;
+  const { productId, serialNumber, condition, notes, harvestedBy, date, status, lpn } = req.body;
   const id = uuidv4();
   const now = date || new Date().toISOString();
   db.prepare(
-    'INSERT INTO harvest_sessions (id, product_id, serial_number, condition, notes, harvested_by, date, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
-  ).run(id, productId, serialNumber || '', condition || 'good', notes || '', harvestedBy, now, status || 'in_progress');
+    'INSERT INTO harvest_sessions (id, product_id, serial_number, condition, notes, harvested_by, date, status, lpn) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+  ).run(id, productId, serialNumber || '', condition || 'good', notes || '', harvestedBy, now, status || 'in_progress', lpn || '');
   const session = db.prepare('SELECT * FROM harvest_sessions WHERE id = ?').get(id) as SessionRow;
   const parts = db.prepare('SELECT * FROM harvested_parts WHERE session_id = ?').all(id) as HarvestedPartRow[];
   res.status(201).json(formatSession(session, parts));

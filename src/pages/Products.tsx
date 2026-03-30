@@ -1,8 +1,10 @@
 import { useState, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Package, Plus, Search, ImagePlus, Upload, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Package, Plus, Search, ImagePlus, Upload, ChevronLeft, ChevronRight, ScanBarcode, ExternalLink, Loader2 } from 'lucide-react';
 import { useApp } from '../data/store';
 import Modal from '../components/Modal';
+import { lookupLPN, saveLPNRecord } from '../data/odooApi';
+import type { OdooLPNLookupResult } from '../types';
 
 export default function Products() {
   const { products, addProduct, searchProducts } = useApp();
@@ -15,6 +17,81 @@ export default function Products() {
   const [currentPage, setCurrentPage] = useState(1);
   const [categoryFilter, setCategoryFilter] = useState('');
   const PAGE_SIZE = 24;
+
+  // LPN lookup state
+  const [lpnQuery, setLpnQuery] = useState('');
+  const [lpnLoading, setLpnLoading] = useState(false);
+  const [lpnResult, setLpnResult] = useState<OdooLPNLookupResult | null>(null);
+  const [lpnError, setLpnError] = useState('');
+
+  async function handleLPNSearch() {
+    const trimmed = lpnQuery.trim();
+    if (!trimmed) return;
+    setLpnLoading(true);
+    setLpnResult(null);
+    setLpnError('');
+    try {
+      const result = await lookupLPN(trimmed);
+      setLpnResult(result);
+
+      // If found locally with a linked product, navigate directly
+      if (result.found && result.source === 'local' && result.localProduct) {
+        navigate(`/products/${result.localProduct.id}`);
+        return;
+      }
+      // If found in Odoo with a matching local product, navigate to it
+      if (result.found && result.source === 'odoo' && result.matchingLocalProduct) {
+        // Save the LPN record linked to the local product
+        await saveLPNRecord({
+          lpn: trimmed,
+          productId: result.matchingLocalProduct.id,
+          odooLotId: result.odooData?.lotId,
+          odooProductId: result.odooData?.productId,
+          odooProductName: result.odooData?.productName || '',
+          odooProductRef: result.odooData?.productRef || '',
+        });
+        navigate(`/products/${result.matchingLocalProduct.id}`);
+        return;
+      }
+    } catch {
+      setLpnError('Failed to look up LPN. Please try again.');
+    } finally {
+      setLpnLoading(false);
+    }
+  }
+
+  async function handleCreateFromOdoo() {
+    if (!lpnResult?.odooData) return;
+    const od = lpnResult.odooData;
+    const product = od.product;
+
+    // Create the product locally
+    const newProduct = addProduct({
+      name: od.productName,
+      model: product?.defaultCode || od.productRef || '',
+      asin: od.productRef || '',
+      upc: (product?.barcode as string) || '',
+      manufacturer: '',
+      category: product?.category || '',
+      description: product?.description || '',
+      image: undefined,
+      parts: [],
+    });
+
+    // Save the LPN record linked to the new product
+    await saveLPNRecord({
+      lpn: lpnResult.odooData.lpn,
+      productId: newProduct.id,
+      odooLotId: od.lotId,
+      odooProductId: od.productId,
+      odooProductName: od.productName,
+      odooProductRef: od.productRef,
+    });
+
+    setLpnResult(null);
+    setLpnQuery('');
+    navigate(`/products/${newProduct.id}`);
+  }
 
   const [formData, setFormData] = useState({
     name: '',
@@ -82,6 +159,79 @@ export default function Products() {
           <Plus size={18} />
           Add Product
         </button>
+      </div>
+
+      {/* LPN Scan Bar */}
+      <div className="bg-indigo-50 border border-indigo-200 rounded-lg p-4 mb-4">
+        <label className="block text-sm font-semibold text-indigo-800 mb-2 flex items-center gap-1.5">
+          <ScanBarcode size={16} />
+          Scan LPN (Odoo Lookup)
+        </label>
+        <div className="flex gap-2">
+          <input
+            type="text"
+            value={lpnQuery}
+            onChange={(e) => { setLpnQuery(e.target.value); setLpnResult(null); setLpnError(''); }}
+            onKeyDown={(e) => { if (e.key === 'Enter') handleLPNSearch(); }}
+            placeholder="Scan or type LPN number..."
+            className="flex-1 rounded-lg border border-indigo-300 px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white"
+          />
+          <button
+            onClick={handleLPNSearch}
+            disabled={lpnLoading || !lpnQuery.trim()}
+            className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 text-sm font-medium flex items-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+          >
+            {lpnLoading ? <Loader2 size={16} className="animate-spin" /> : <Search size={16} />}
+            {lpnLoading ? 'Looking up...' : 'Find'}
+          </button>
+        </div>
+
+        {/* LPN Error */}
+        {lpnError && (
+          <p className="mt-2 text-sm text-red-600">{lpnError}</p>
+        )}
+
+        {/* LPN Result: Not found */}
+        {lpnResult && !lpnResult.found && (
+          <div className="mt-3 p-3 bg-white rounded-lg border border-gray-200">
+            <p className="text-sm text-gray-600">
+              LPN <span className="font-mono font-medium">{lpnQuery}</span> was not found
+              {lpnResult.odooAvailable === false ? ' (Odoo connection unavailable)' : ' in Odoo'}.
+            </p>
+          </div>
+        )}
+
+        {/* LPN Result: Found in Odoo, no local product */}
+        {lpnResult?.found && lpnResult.source === 'odoo' && !lpnResult.matchingLocalProduct && lpnResult.odooData && (
+          <div className="mt-3 p-3 bg-white rounded-lg border border-green-200">
+            <p className="text-sm text-green-700 font-medium mb-2">Found in Odoo!</p>
+            <div className="grid grid-cols-2 gap-2 text-sm mb-3">
+              <div><span className="text-gray-500">Product:</span> {lpnResult.odooData.productName}</div>
+              <div><span className="text-gray-500">ASIN/Ref:</span> {lpnResult.odooData.productRef || '—'}</div>
+              {lpnResult.odooData.product?.category && (
+                <div><span className="text-gray-500">Category:</span> {lpnResult.odooData.product.category}</div>
+              )}
+            </div>
+            <p className="text-sm text-gray-600 mb-2">This product doesn't exist in your Parts Inventory yet.</p>
+            <button
+              onClick={handleCreateFromOdoo}
+              className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 text-sm font-medium flex items-center gap-1.5 transition-colors"
+            >
+              <Plus size={16} />
+              Create Product from Odoo Data
+            </button>
+          </div>
+        )}
+
+        {/* LPN Result: Found locally (no linked product) */}
+        {lpnResult?.found && lpnResult.source === 'local' && !lpnResult.localProduct && (
+          <div className="mt-3 p-3 bg-white rounded-lg border border-yellow-200">
+            <p className="text-sm text-yellow-700">
+              LPN <span className="font-mono font-medium">{lpnQuery}</span> is tracked but not linked to a local product.
+              Odoo product: <span className="font-medium">{lpnResult.lpnRecord?.odooProductName}</span>
+            </p>
+          </div>
+        )}
       </div>
 
       {/* Search and Filter Bar */}

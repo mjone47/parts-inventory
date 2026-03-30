@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import path from 'path';
@@ -15,6 +16,7 @@ import ordersRouter from './routes/orders';
 import warehouseLocationsRouter from './routes/warehouseLocations';
 import inventoryTransactionsRouter from './routes/inventoryTransactions';
 import internalOrdersRouter from './routes/internalOrders';
+import odooRouter from './routes/odoo';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -39,6 +41,7 @@ app.use('/api/orders', ordersRouter);
 app.use('/api/warehouse-locations', warehouseLocationsRouter);
 app.use('/api/inventory-transactions', inventoryTransactionsRouter);
 app.use('/api/internal-orders', internalOrdersRouter);
+app.use('/api/odoo', odooRouter);
 
 // ── Production: serve built frontend ──────────────────────────────────────────
 const distPath = path.join(__dirname, '..', 'dist');

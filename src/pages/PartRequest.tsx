@@ -16,17 +16,81 @@ import {
   Layers,
   ChevronRight,
   Loader2,
-  ExternalLink,
+  Image as ImageIcon,
+  Eye,
+  CheckCircle2,
 } from 'lucide-react';
 import { useApp } from '../data/store';
-import { useNavigate } from 'react-router-dom';
-import type { InternalOrderItem, Part } from '../types';
+import type { InternalOrderItem, Part, Product } from '../types';
 import { lookupLPN, saveLPNRecord } from '../data/odooApi';
 
 interface CartItem {
   part: Part;
   quantity: number;
 }
+
+// ── Hotspot tooltip for the exploded view ────────────────────────────────────
+
+function HotspotButton({
+  label,
+  part,
+  isInCart,
+  onAdd,
+}: {
+  label: string;
+  part: Part | null;
+  isInCart: boolean;
+  onAdd: () => void;
+}) {
+  const [showTooltip, setShowTooltip] = useState(false);
+
+  return (
+    <div
+      className="absolute group"
+      style={{ zIndex: 10 }}
+      onMouseEnter={() => setShowTooltip(true)}
+      onMouseLeave={() => setShowTooltip(false)}
+    >
+      <button
+        onClick={(e) => {
+          e.stopPropagation();
+          if (part) onAdd();
+        }}
+        className={`w-8 h-8 rounded-full text-white text-xs font-bold flex items-center justify-center shadow-lg border-2 transition-all ${
+          isInCart
+            ? 'bg-green-500 border-green-200 scale-110'
+            : 'bg-blue-600 border-white hover:bg-blue-700 hover:scale-110'
+        }`}
+      >
+        {isInCart ? <CheckCircle2 size={14} /> : label}
+      </button>
+
+      {/* Tooltip */}
+      {showTooltip && part && (
+        <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 whitespace-nowrap z-50 pointer-events-none">
+          <div className="bg-gray-900 text-white text-xs rounded-lg px-3 py-2 shadow-xl">
+            <p className="font-semibold">{part.name}</p>
+            <p className="text-gray-300 text-[11px]">{part.partNumber}</p>
+            <div className="flex items-center gap-2 mt-1">
+              <span className={`font-medium ${
+                part.quantityInStock === 0 ? 'text-red-400' :
+                part.quantityInStock <= part.minimumStock ? 'text-amber-400' :
+                'text-green-400'
+              }`}>
+                {part.quantityInStock} in stock
+              </span>
+              {isInCart && <span className="text-green-400">In cart</span>}
+            </div>
+            {!isInCart && <p className="text-blue-300 mt-0.5">Click to add</p>}
+          </div>
+          <div className="w-2 h-2 bg-gray-900 rotate-45 mx-auto -mt-1" />
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Main component ───────────────────────────────────────────────────────────
 
 export default function PartRequest() {
   const {
@@ -43,8 +107,6 @@ export default function PartRequest() {
     users,
     addProduct,
   } = useApp();
-
-  const navigate = useNavigate();
 
   // Form state
   const [workstation, setWorkstation] = useState('');
@@ -65,34 +127,44 @@ export default function PartRequest() {
     odooData?: any;
   } | null>(null);
 
+  // Exploded view state
+  const [showExplodedView, setShowExplodedView] = useState(true);
+  const [highlightedPartId, setHighlightedPartId] = useState<string | null>(null);
+
   // UI state
   const [submitted, setSubmitted] = useState(false);
   const [lastOrder, setLastOrder] = useState<{ id: string; itemCount: number } | null>(null);
   const scanRef = useRef<HTMLInputElement>(null);
 
-  // Product search results
+  // ── Derived data ──────────────────────────────────────────────────────────
+
+  const selectedProduct = selectedProductId ? getProductById(selectedProductId) : null;
+
   const productSearchResults = useMemo(() => {
     if (!productSearchQuery.trim()) return [];
     return searchProducts(productSearchQuery).slice(0, 10);
   }, [productSearchQuery, searchProducts]);
 
-  // Parts from selected product
+  // Parts from selected product (with ProductPart mapping for hotspot data)
   const selectedProductParts = useMemo(() => {
-    if (!selectedProductId) return [];
-    const product = getProductById(selectedProductId);
-    if (!product) return [];
-    return product.parts
-      .map((pp) => getPartById(pp.partId))
+    if (!selectedProduct) return [];
+    return selectedProduct.parts
+      .map((pp) => {
+        const part = getPartById(pp.partId);
+        if (!part) return null;
+        return { ...part, positionLabel: pp.positionLabel, hotspotX: pp.x, hotspotY: pp.y };
+      })
       .filter((p): p is NonNullable<typeof p> => !!p);
-  }, [selectedProductId, getProductById, getPartById]);
+  }, [selectedProduct, getPartById]);
 
-  // Search Parts results (fuzzy search)
+  // Does this product have an exploded view with hotspots?
+  const hasExplodedView = selectedProduct?.explodedViewImage && selectedProduct.parts.some(pp => pp.x > 0 || pp.y > 0);
+
   const searchResults = useMemo(() => {
     if (!searchQuery.trim()) return [];
     return searchParts(searchQuery).slice(0, 20);
   }, [searchQuery, searchParts]);
 
-  // My past requests
   const myRequests = useMemo(() => {
     if (!currentUser) return [];
     return [...internalOrders]
@@ -111,6 +183,8 @@ export default function PartRequest() {
     return loc ? loc.name : locationId;
   };
 
+  const isInCart = (partId: string) => cart.some(c => c.part.id === partId);
+
   // ── LPN / Identifier Scan ─────────────────────────────────────────────────
 
   async function handleScan() {
@@ -119,7 +193,6 @@ export default function PartRequest() {
     setScanLoading(true);
     setScanResult(null);
 
-    // First try local match (ASIN, UPC, model, name)
     const localMatch = products.find(
       (p) =>
         p.asin.toLowerCase() === trimmed.toLowerCase() ||
@@ -136,7 +209,6 @@ export default function PartRequest() {
       return;
     }
 
-    // Try LPN lookup via Odoo
     try {
       const result = await lookupLPN(trimmed);
       if (result.found) {
@@ -146,7 +218,6 @@ export default function PartRequest() {
           setProductSearchQuery(localProd.name);
           setScanResult({ type: 'found', message: `Found: ${localProd.name}`, productId: localProd.id });
           setScanInput('');
-          // Save LPN record
           saveLPNRecord({ lpn: trimmed, productId: localProd.id }).catch(() => {});
         } else if (result.odooData) {
           setScanResult({
@@ -179,7 +250,6 @@ export default function PartRequest() {
       description: od.product?.description || '',
       parts: [],
     });
-    // Save LPN record linked to the new product
     if (scanInput.trim()) {
       saveLPNRecord({ lpn: scanInput.trim(), productId: newProduct.id }).catch(() => {});
     }
@@ -189,7 +259,8 @@ export default function PartRequest() {
     setScanInput('');
   }
 
-  // Cart helpers
+  // ── Cart helpers ──────────────────────────────────────────────────────────
+
   const addToCart = (part: Part) => {
     setCart((prev) => {
       const existing = prev.find((c) => c.part.id === part.id);
@@ -216,9 +287,18 @@ export default function PartRequest() {
     setCart((prev) => prev.filter((c) => c.part.id !== partId));
   };
 
+  const addAllPartsToCart = () => {
+    selectedProductParts.forEach((part) => {
+      if (!isInCart(part.id)) {
+        addToCart(part);
+      }
+    });
+  };
+
   const totalItems = cart.reduce((sum, c) => sum + c.quantity, 0);
 
-  // Submit — all orders are "urgent"
+  // ── Submit ────────────────────────────────────────────────────────────────
+
   const handleSubmit = () => {
     if (!currentUser || cart.length === 0 || !workstation.trim()) return;
 
@@ -236,7 +316,7 @@ export default function PartRequest() {
       requestedBy: currentUser.id,
       workstation: workstation.trim(),
       items,
-      priority: 'urgent', // All orders are urgent
+      priority: 'urgent',
       status: 'new',
       notes: notes.trim(),
     });
@@ -244,7 +324,6 @@ export default function PartRequest() {
     setLastOrder({ id: order.id, itemCount: totalItems });
     setSubmitted(true);
 
-    // Auto-clear after showing confirmation
     setTimeout(() => {
       setCart([]);
       setNotes('');
@@ -265,6 +344,8 @@ export default function PartRequest() {
     completed: 'bg-green-100 text-green-800',
     cancelled: 'bg-gray-100 text-gray-600',
   };
+
+  // ── Render ────────────────────────────────────────────────────────────────
 
   return (
     <div className="space-y-6">
@@ -289,7 +370,7 @@ export default function PartRequest() {
         )}
       </div>
 
-      {/* Success confirmation overlay */}
+      {/* Success confirmation */}
       {submitted && lastOrder && (
         <div className="bg-green-50 border-2 border-green-300 rounded-xl p-6 flex items-center gap-4 animate-pulse">
           <CheckCircle className="h-10 w-10 text-green-600 flex-shrink-0" />
@@ -307,9 +388,7 @@ export default function PartRequest() {
       <div className="bg-white rounded-xl border p-5">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Workstation / Bench
-            </label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Workstation / Bench</label>
             <input
               type="text"
               value={workstation}
@@ -319,9 +398,7 @@ export default function PartRequest() {
             />
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Notes (optional)
-            </label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Notes (optional)</label>
             <textarea
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
@@ -364,7 +441,6 @@ export default function PartRequest() {
               </button>
             </div>
 
-            {/* Scan result */}
             {scanResult && (
               <div className={`mt-3 rounded-lg border p-3 ${
                 scanResult.type === 'found' ? 'bg-green-50 border-green-200' :
@@ -421,6 +497,8 @@ export default function PartRequest() {
                       <p className="text-sm font-medium text-gray-900">{product.name}</p>
                       <p className="text-xs text-gray-500">
                         {product.model} {product.asin ? `| ASIN: ${product.asin}` : ''}
+                        {product.parts.length > 0 ? ` | ${product.parts.length} parts` : ''}
+                        {product.explodedViewImage ? ' | Has diagram' : ''}
                       </p>
                     </div>
                     <ChevronRight className="h-4 w-4 text-gray-400 flex-shrink-0" />
@@ -429,20 +507,96 @@ export default function PartRequest() {
               </div>
             )}
 
-            {/* Selected Product Parts */}
-            {selectedProductId && (
-              <div className="mt-2">
-                <div className="flex items-center justify-between mb-2">
-                  <p className="text-xs font-semibold text-blue-700 bg-blue-50 px-2 py-1 rounded">
-                    {getProductById(selectedProductId)?.name} - Parts
-                  </p>
-                  <button
-                    onClick={() => { setSelectedProductId(null); setProductSearchQuery(''); }}
-                    className="text-xs text-gray-500 hover:text-gray-700"
-                  >
-                    Clear
-                  </button>
+            {/* Selected Product — Exploded View + Parts */}
+            {selectedProductId && selectedProduct && (
+              <div className="mt-3 space-y-3">
+                {/* Product header */}
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <p className="text-sm font-semibold text-blue-700 bg-blue-50 px-2.5 py-1 rounded">
+                      {selectedProduct.name}
+                    </p>
+                    <span className="text-xs text-gray-400">
+                      {selectedProductParts.length} part{selectedProductParts.length !== 1 ? 's' : ''}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {hasExplodedView && (
+                      <button
+                        onClick={() => setShowExplodedView(!showExplodedView)}
+                        className={`text-xs font-medium px-2.5 py-1 rounded-lg flex items-center gap-1 transition-colors ${
+                          showExplodedView
+                            ? 'bg-blue-100 text-blue-700'
+                            : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                        }`}
+                      >
+                        <Eye className="h-3.5 w-3.5" />
+                        {showExplodedView ? 'Hide' : 'Show'} Diagram
+                      </button>
+                    )}
+                    {selectedProductParts.length > 0 && (
+                      <button
+                        onClick={addAllPartsToCart}
+                        className="text-xs font-medium px-2.5 py-1 rounded-lg bg-green-100 text-green-700 hover:bg-green-200 flex items-center gap-1 transition-colors"
+                      >
+                        <Plus className="h-3.5 w-3.5" />
+                        Add All to Cart
+                      </button>
+                    )}
+                    <button
+                      onClick={() => { setSelectedProductId(null); setProductSearchQuery(''); setHighlightedPartId(null); }}
+                      className="text-xs text-gray-500 hover:text-gray-700"
+                    >
+                      Clear
+                    </button>
+                  </div>
                 </div>
+
+                {/* Exploded View Diagram with clickable hotspots */}
+                {hasExplodedView && showExplodedView && (
+                  <div className="bg-gray-50 rounded-lg border border-gray-200 p-3">
+                    <p className="text-xs text-gray-500 mb-2 flex items-center gap-1">
+                      <ImageIcon className="h-3.5 w-3.5" />
+                      Click a hotspot to add that part to your cart
+                    </p>
+                    <div className="relative inline-block w-full">
+                      <img
+                        src={selectedProduct.explodedViewImage}
+                        alt={`${selectedProduct.name} Exploded View`}
+                        className="w-full h-auto rounded-lg"
+                        draggable={false}
+                      />
+                      {/* Hotspot markers */}
+                      {selectedProduct.parts.map((pp) => {
+                        if (pp.x === 0 && pp.y === 0) return null;
+                        const part = getPartById(pp.partId);
+                        if (!part) return null;
+                        const inCart = isInCart(part.id);
+
+                        return (
+                          <div
+                            key={pp.id}
+                            style={{
+                              position: 'absolute',
+                              left: `${pp.x}%`,
+                              top: `${pp.y}%`,
+                              transform: 'translate(-50%, -50%)',
+                            }}
+                          >
+                            <HotspotButton
+                              label={pp.positionLabel}
+                              part={part}
+                              isInCart={inCart}
+                              onAdd={() => addToCart(part)}
+                            />
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {/* Parts list */}
                 <div className="border rounded-lg divide-y max-h-64 overflow-y-auto">
                   {selectedProductParts.length === 0 ? (
                     <div className="text-center py-6">
@@ -450,49 +604,73 @@ export default function PartRequest() {
                       <p className="text-xs text-gray-400 mt-1">Parts need to be added to this product in the Products page.</p>
                     </div>
                   ) : (
-                    selectedProductParts.map((part) => (
-                      <div
-                        key={part.id}
-                        className="flex items-center justify-between px-3 py-2 hover:bg-gray-50"
-                      >
-                        <div className="min-w-0 flex-1">
-                          <div className="flex items-center gap-2">
-                            <span className="text-xs font-mono text-gray-500 bg-gray-100 px-1.5 py-0.5 rounded">
-                              {part.partNumber}
-                            </span>
-                            <span className="text-sm font-medium text-gray-900 truncate">
-                              {part.name}
-                            </span>
-                          </div>
-                          <div className="flex items-center gap-3 mt-0.5">
-                            <span
-                              className={`text-xs font-medium ${
-                                part.quantityInStock === 0
-                                  ? 'text-red-600'
-                                  : part.quantityInStock <= part.minimumStock
-                                  ? 'text-amber-600'
-                                  : 'text-green-600'
-                              }`}
-                            >
-                              <Package className="h-3 w-3 inline mr-0.5" />
-                              {part.quantityInStock} in stock
-                            </span>
-                            {part.warehouseLocationId && (
-                              <span className="text-xs text-gray-500">
-                                <MapPin className="h-3 w-3 inline mr-0.5" />
-                                {getLocationName(part.warehouseLocationId)}
-                              </span>
-                            )}
-                          </div>
-                        </div>
-                        <button
-                          onClick={() => addToCart(part)}
-                          className="ml-2 p-1.5 rounded-lg bg-blue-50 text-blue-600 hover:bg-blue-100 flex-shrink-0"
+                    selectedProductParts.map((part) => {
+                      const inCart = isInCart(part.id);
+                      const isHighlighted = highlightedPartId === part.id;
+
+                      return (
+                        <div
+                          key={part.id}
+                          className={`flex items-center justify-between px-3 py-2 transition-colors ${
+                            inCart ? 'bg-green-50' : isHighlighted ? 'bg-blue-50' : 'hover:bg-gray-50'
+                          }`}
+                          onMouseEnter={() => setHighlightedPartId(part.id)}
+                          onMouseLeave={() => setHighlightedPartId(null)}
                         >
-                          <Plus className="h-4 w-4" />
-                        </button>
-                      </div>
-                    ))
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-2">
+                              {/* Hotspot label badge */}
+                              {part.positionLabel && (part.hotspotX > 0 || part.hotspotY > 0) && (
+                                <span className="w-6 h-6 rounded-full bg-blue-600 text-white text-[10px] font-bold flex items-center justify-center flex-shrink-0">
+                                  {part.positionLabel}
+                                </span>
+                              )}
+                              <span className="text-xs font-mono text-gray-500 bg-gray-100 px-1.5 py-0.5 rounded">
+                                {part.partNumber}
+                              </span>
+                              <span className="text-sm font-medium text-gray-900 truncate">
+                                {part.name}
+                              </span>
+                              {inCart && (
+                                <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-green-100 text-green-700">
+                                  IN CART
+                                </span>
+                              )}
+                            </div>
+                            <div className="flex items-center gap-3 mt-0.5">
+                              <span
+                                className={`text-xs font-medium ${
+                                  part.quantityInStock === 0
+                                    ? 'text-red-600'
+                                    : part.quantityInStock <= part.minimumStock
+                                    ? 'text-amber-600'
+                                    : 'text-green-600'
+                                }`}
+                              >
+                                <Package className="h-3 w-3 inline mr-0.5" />
+                                {part.quantityInStock} in stock
+                              </span>
+                              {part.warehouseLocationId && (
+                                <span className="text-xs text-gray-500">
+                                  <MapPin className="h-3 w-3 inline mr-0.5" />
+                                  {getLocationName(part.warehouseLocationId)}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                          <button
+                            onClick={() => addToCart(part)}
+                            className={`ml-2 p-1.5 rounded-lg flex-shrink-0 transition-colors ${
+                              inCart
+                                ? 'bg-green-100 text-green-600 hover:bg-green-200'
+                                : 'bg-blue-50 text-blue-600 hover:bg-blue-100'
+                            }`}
+                          >
+                            <Plus className="h-4 w-4" />
+                          </button>
+                        </div>
+                      );
+                    })
                   )}
                 </div>
               </div>
@@ -513,13 +691,14 @@ export default function PartRequest() {
               className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
             />
 
-            {/* Results */}
             {searchResults.length > 0 && (
               <div className="mt-3 border rounded-lg divide-y max-h-80 overflow-y-auto">
                 {searchResults.map((part) => (
                   <div
                     key={part.id}
-                    className="flex items-center justify-between px-3 py-2 hover:bg-gray-50"
+                    className={`flex items-center justify-between px-3 py-2 transition-colors ${
+                      isInCart(part.id) ? 'bg-green-50' : 'hover:bg-gray-50'
+                    }`}
                   >
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2">
@@ -529,6 +708,11 @@ export default function PartRequest() {
                         <span className="text-sm font-medium text-gray-900 truncate">
                           {part.name}
                         </span>
+                        {isInCart(part.id) && (
+                          <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-green-100 text-green-700">
+                            IN CART
+                          </span>
+                        )}
                       </div>
                       <div className="flex items-center gap-3 mt-0.5">
                         <span
@@ -553,7 +737,11 @@ export default function PartRequest() {
                     </div>
                     <button
                       onClick={() => addToCart(part)}
-                      className="ml-2 p-1.5 rounded-lg bg-blue-50 text-blue-600 hover:bg-blue-100 flex-shrink-0"
+                      className={`ml-2 p-1.5 rounded-lg flex-shrink-0 transition-colors ${
+                        isInCart(part.id)
+                          ? 'bg-green-100 text-green-600 hover:bg-green-200'
+                          : 'bg-blue-50 text-blue-600 hover:bg-blue-100'
+                      }`}
                     >
                       <Plus className="h-4 w-4" />
                     </button>
@@ -589,7 +777,7 @@ export default function PartRequest() {
               <div className="text-center py-8 text-gray-400">
                 <ShoppingCart className="h-8 w-8 mx-auto mb-2 opacity-50" />
                 <p className="text-sm">No parts added yet</p>
-                <p className="text-xs mt-1">Scan an identifier or search to add parts</p>
+                <p className="text-xs mt-1">Scan an identifier, click a hotspot, or search to add parts</p>
               </div>
             ) : (
               <div className="space-y-3">
@@ -647,12 +835,9 @@ export default function PartRequest() {
                   </div>
                 ))}
 
-                {/* Submit button */}
                 <button
                   onClick={handleSubmit}
-                  disabled={
-                    cart.length === 0 || !workstation.trim() || submitted
-                  }
+                  disabled={cart.length === 0 || !workstation.trim() || submitted}
                   className="w-full mt-4 py-3 bg-green-600 text-white rounded-xl font-semibold text-sm hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 transition-colors"
                 >
                   <Send className="h-4 w-4" />

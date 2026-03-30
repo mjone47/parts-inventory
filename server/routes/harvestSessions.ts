@@ -123,9 +123,16 @@ router.post('/:id/parts', (req, res) => {
     'INSERT INTO harvested_parts (id, session_id, part_id, quantity, condition, notes, added_to_inventory) VALUES (?, ?, ?, ?, ?, ?, ?)'
   ).run(id, req.params.id, partId, quantity || 1, condition || 'good', notes || '', addedToInventory ? 1 : 0);
 
-  const updatedSession = db.prepare('SELECT * FROM harvest_sessions WHERE id = ?').get(req.params.id) as SessionRow;
-  const parts = db.prepare('SELECT * FROM harvested_parts WHERE session_id = ?').all(req.params.id) as HarvestedPartRow[];
-  res.status(201).json(formatSession(updatedSession, parts));
+  // Return just the new part (the store expects a single HarvestedPart)
+  const newPart = db.prepare('SELECT * FROM harvested_parts WHERE id = ?').get(id) as HarvestedPartRow;
+  res.status(201).json({
+    id: newPart.id,
+    partId: newPart.part_id,
+    quantity: newPart.quantity,
+    condition: newPart.condition,
+    notes: newPart.notes,
+    addedToInventory: newPart.added_to_inventory === 1,
+  });
 });
 
 export default router;

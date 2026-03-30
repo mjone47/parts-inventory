@@ -1,5 +1,4 @@
 import { useState } from 'react';
-import { v4 as uuidv4 } from 'uuid';
 import {
   Scissors,
   Plus,
@@ -67,7 +66,7 @@ export default function Harvesting() {
     getProductById,
     getPartById,
     addHarvestSession,
-    updateHarvestSession,
+    addHarvestedPart,
     completeHarvestSession,
     adjustStock,
     addInventoryTransaction,
@@ -202,21 +201,14 @@ export default function Harvesting() {
       date: new Date().toISOString(),
     });
 
-    // Update the session's harvested parts
-    const session = harvestSessions.find((s) => s.id === activeSessionId);
-    if (session) {
-      const newHarvestedPart: HarvestedPart = {
-        id: uuidv4(),
-        partId: row.partId,
-        quantity: row.quantity,
-        condition: row.condition,
-        notes: row.notes,
-        addedToInventory: true,
-      };
-      updateHarvestSession(activeSessionId, {
-        harvestedParts: [...session.harvestedParts, newHarvestedPart],
-      });
-    }
+    // Save the harvested part to the database
+    addHarvestedPart(activeSessionId, {
+      partId: row.partId,
+      quantity: row.quantity,
+      condition: row.condition,
+      notes: row.notes,
+      addedToInventory: true,
+    });
 
     // Mark row as added
     setHarvestRows((prev) =>

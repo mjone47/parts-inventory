@@ -64,6 +64,7 @@ interface AppContextValue {
   harvestSessions: HarvestSession[];
   getHarvestSessionById: (id: string) => HarvestSession | undefined;
   addHarvestSession: (session: Omit<HarvestSession, 'id'>) => HarvestSession;
+  addHarvestSessionAsync: (session: Omit<HarvestSession, 'id'>) => Promise<HarvestSession>;
   updateHarvestSession: (id: string, updates: Partial<Omit<HarvestSession, 'id'>>) => void;
   completeHarvestSession: (id: string) => void;
   addHarvestedPart: (sessionId: string, part: Omit<HarvestedPart, 'id'>) => void;
@@ -360,6 +361,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     [],
   );
 
+  const addHarvestSessionAsync = useCallback(
+    async (data: Omit<HarvestSession, 'id'>): Promise<HarvestSession> => {
+      const saved = await api<HarvestSession>('/harvest-sessions', { method: 'POST', body: JSON.stringify(data) });
+      setHarvestSessions((prev) => [...prev, saved]);
+      return saved;
+    },
+    [],
+  );
+
   const updateHarvestSession = useCallback(
     (id: string, updates: Partial<Omit<HarvestSession, 'id'>>) => {
       setHarvestSessions((prev) => prev.map((s) => (s.id === id ? { ...s, ...updates } : s)));
@@ -648,7 +658,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     products, getProductById, addProduct, updateProduct, deleteProduct, searchProducts,
     parts, getPartById, addPart, addPartAsync, updatePart, deletePart, adjustStock, searchParts, generatePrcId, checkDuplicatePartNumber,
     vendors, getVendorById, addVendor, updateVendor, deleteVendor,
-    harvestSessions, getHarvestSessionById, addHarvestSession, updateHarvestSession, completeHarvestSession, addHarvestedPart,
+    harvestSessions, getHarvestSessionById, addHarvestSession, addHarvestSessionAsync, updateHarvestSession, completeHarvestSession, addHarvestedPart,
     orders, getOrderById, addOrder, updateOrder, updateOrderStatus, receiveOrderItems,
     warehouseLocations, getWarehouseLocationById, addWarehouseLocation, updateWarehouseLocation, deleteWarehouseLocation, renameZone, assignPartToLocation, removePartFromLocation,
     inventoryTransactions, getTransactionsByPartId, addInventoryTransaction,

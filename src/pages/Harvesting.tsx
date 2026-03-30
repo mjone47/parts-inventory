@@ -65,7 +65,7 @@ export default function Harvesting() {
     currentUser,
     getProductById,
     getPartById,
-    addHarvestSession,
+    addHarvestSessionAsync,
     addHarvestedPart,
     completeHarvestSession,
     adjustStock,
@@ -150,10 +150,10 @@ export default function Harvesting() {
       )
     : products;
 
-  function handleCreateSession() {
+  async function handleCreateSession() {
     if (!formProductId || !formSerial) return;
 
-    const session = addHarvestSession({
+    const session = await addHarvestSessionAsync({
       productId: formProductId,
       serialNumber: formSerial,
       condition: formCondition,

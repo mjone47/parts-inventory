@@ -244,7 +244,7 @@ export default function PartsInventory() {
                           <img
                             src={part.image}
                             alt={part.name}
-                            className="w-10 h-10 rounded object-cover"
+                            className="w-10 h-10 rounded object-contain"
                           />
                         ) : (
                           <div className="w-10 h-10 rounded bg-gray-100 flex items-center justify-center">

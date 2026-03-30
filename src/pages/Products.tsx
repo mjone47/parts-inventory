@@ -142,7 +142,7 @@ export default function Products() {
                 <img
                   src={product.image}
                   alt={product.name}
-                  className="w-full h-48 object-cover"
+                  className="w-full h-48 object-contain bg-white p-2"
                 />
               ) : (
                 <div className="w-full h-48 bg-gray-100 flex items-center justify-center">
@@ -235,7 +235,7 @@ export default function Products() {
                 <img
                   src={imagePreview}
                   alt="Product preview"
-                  className="rounded max-h-40 object-cover"
+                  className="rounded max-h-40 object-contain"
                 />
                 <button
                   type="button"

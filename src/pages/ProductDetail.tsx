@@ -282,7 +282,7 @@ export default function ProductDetail() {
         </div>
         {product.image && (
           <div className="mb-4">
-            <img src={product.image} alt={product.name} className="max-h-48 rounded-lg object-cover" />
+            <img src={product.image} alt={product.name} className="max-h-48 rounded-lg object-contain" />
           </div>
         )}
         <div className="flex flex-wrap gap-4 mt-2 text-sm text-gray-600">
@@ -951,7 +951,7 @@ export default function ProductDetail() {
             <label className="block text-sm font-medium text-gray-700 mb-1">Product Image</label>
             {editProductImage ? (
               <div className="flex flex-col items-center gap-2">
-                <img src={editProductImage} alt="Preview" className="rounded max-h-40 object-cover" />
+                <img src={editProductImage} alt="Preview" className="rounded max-h-40 object-contain" />
                 <button
                   type="button"
                   onClick={() => editImageInputRef.current?.click()}

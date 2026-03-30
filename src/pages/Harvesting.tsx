@@ -260,130 +260,125 @@ export default function Harvesting() {
         </button>
       </div>
 
-      {/* Sessions table */}
+      {/* Sessions list */}
       <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-        <table className="min-w-full divide-y divide-gray-200">
-          <thead className="bg-gray-50">
-            <tr>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Product</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Serial #</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Date</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Harvested By</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Parts</th>
-              <th className="px-6 py-3" />
-            </tr>
-          </thead>
-          <tbody className="bg-white divide-y divide-gray-200">
-            {sortedSessions.length === 0 && (
-              <tr>
-                <td colSpan={7} className="px-6 py-12 text-center text-gray-400">
-                  No harvest sessions yet. Start one above.
-                </td>
-              </tr>
-            )}
-            {sortedSessions.map((session) => {
-              const product = getProductById(session.productId);
-              const userName = users.find((u) => u.id === session.harvestedBy)?.name ?? 'Unknown';
-              const isExpanded = expandedId === session.id;
+        {/* Header */}
+        <div className="grid grid-cols-[2fr_1fr_1fr_1fr_auto_auto_28px] items-center gap-4 px-6 py-3 bg-gray-50 border-b border-gray-200">
+          <span className="text-xs font-medium text-gray-500 uppercase tracking-wider">Product</span>
+          <span className="text-xs font-medium text-gray-500 uppercase tracking-wider">Serial #</span>
+          <span className="text-xs font-medium text-gray-500 uppercase tracking-wider">Date</span>
+          <span className="text-xs font-medium text-gray-500 uppercase tracking-wider">Harvested By</span>
+          <span className="text-xs font-medium text-gray-500 uppercase tracking-wider min-w-[100px]">Status</span>
+          <span className="text-xs font-medium text-gray-500 uppercase tracking-wider min-w-[70px]">Parts</span>
+          <span />
+        </div>
 
-              return (
-                <tr key={session.id} className="group">
-                  <td colSpan={7} className="p-0">
-                    {/* Main row */}
-                    <div
-                      className="grid grid-cols-[1fr_1fr_1fr_1fr_auto_auto_40px] items-center px-6 py-4 cursor-pointer hover:bg-gray-50 transition-colors"
-                      onClick={() => setExpandedId(isExpanded ? null : session.id)}
-                    >
-                      <span className="text-sm font-medium text-gray-900">
-                        {product?.name ?? 'Unknown Product'}
-                      </span>
-                      <span className="text-sm text-gray-500 flex items-center gap-1">
-                        <Hash size={14} />
-                        {session.serialNumber}
-                      </span>
-                      <span className="text-sm text-gray-500 flex items-center gap-1">
-                        <Calendar size={14} />
-                        {new Date(session.date).toLocaleDateString()}
-                      </span>
-                      <span className="text-sm text-gray-500 flex items-center gap-1">
-                        <User size={14} />
-                        {userName}
-                      </span>
-                      <StatusBadge status={session.status} />
-                      <span className="text-sm text-gray-500 ml-4">
-                        {session.harvestedParts.length} part{session.harvestedParts.length !== 1 ? 's' : ''}
-                      </span>
-                      <span className="text-gray-400">
-                        {isExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
-                      </span>
+        {/* Rows */}
+        {sortedSessions.length === 0 && (
+          <div className="px-6 py-12 text-center text-gray-400">
+            No harvest sessions yet. Start one above.
+          </div>
+        )}
+        {sortedSessions.map((session) => {
+          const product = getProductById(session.productId);
+          const userName = users.find((u) => u.id === session.harvestedBy)?.name ?? 'Unknown';
+          const isExpanded = expandedId === session.id;
+
+          return (
+            <div key={session.id} className="border-b border-gray-200 last:border-b-0">
+              {/* Main row */}
+              <div
+                className="grid grid-cols-[2fr_1fr_1fr_1fr_auto_auto_28px] items-center gap-4 px-6 py-4 cursor-pointer hover:bg-gray-50 transition-colors"
+                onClick={() => setExpandedId(isExpanded ? null : session.id)}
+              >
+                <span className="text-sm font-medium text-gray-900">
+                  {product?.name ?? 'Unknown Product'}
+                </span>
+                <span className="text-sm text-gray-500 flex items-center gap-1">
+                  <Hash size={14} className="shrink-0" />
+                  {session.serialNumber}
+                </span>
+                <span className="text-sm text-gray-500 flex items-center gap-1">
+                  <Calendar size={14} className="shrink-0" />
+                  {new Date(session.date).toLocaleDateString()}
+                </span>
+                <span className="text-sm text-gray-500 flex items-center gap-1">
+                  <User size={14} className="shrink-0" />
+                  {userName}
+                </span>
+                <span className="min-w-[100px]">
+                  <StatusBadge status={session.status} />
+                </span>
+                <span className="text-sm text-gray-500 min-w-[70px]">
+                  {session.harvestedParts.length} part{session.harvestedParts.length !== 1 ? 's' : ''}
+                </span>
+                <span className="text-gray-400">
+                  {isExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                </span>
+              </div>
+
+              {/* Expanded detail */}
+              {isExpanded && (
+                <div className="border-t border-gray-100 bg-gray-50 px-6 py-4 space-y-3">
+                  <div className="grid grid-cols-3 gap-4 text-sm">
+                    <div>
+                      <span className="text-gray-500">Unit Condition:</span>{' '}
+                      <ConditionBadge condition={session.condition} />
                     </div>
-
-                    {/* Expanded detail */}
-                    {isExpanded && (
-                      <div className="border-t border-gray-100 bg-gray-50 px-6 py-4 space-y-3">
-                        <div className="grid grid-cols-3 gap-4 text-sm">
-                          <div>
-                            <span className="text-gray-500">Unit Condition:</span>{' '}
-                            <ConditionBadge condition={session.condition} />
-                          </div>
-                          {session.notes && (
-                            <div className="col-span-2 flex items-start gap-1">
-                              <FileText size={14} className="text-gray-400 mt-0.5" />
-                              <span className="text-gray-600">{session.notes}</span>
-                            </div>
-                          )}
-                        </div>
-
-                        {session.harvestedParts.length > 0 && (
-                          <table className="w-full text-sm">
-                            <thead>
-                              <tr className="text-left text-xs text-gray-500 uppercase">
-                                <th className="pb-2">Part</th>
-                                <th className="pb-2">Qty</th>
-                                <th className="pb-2">Condition</th>
-                                <th className="pb-2">Notes</th>
-                                <th className="pb-2">Added</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {session.harvestedParts.map((hp) => {
-                                const part = getPartById(hp.partId);
-                                return (
-                                  <tr key={hp.id} className="border-t border-gray-200">
-                                    <td className="py-1.5 font-medium text-gray-800">
-                                      {part?.name ?? 'Unknown Part'}
-                                    </td>
-                                    <td className="py-1.5 text-gray-600">{hp.quantity}</td>
-                                    <td className="py-1.5">
-                                      <ConditionBadge condition={hp.condition} />
-                                    </td>
-                                    <td className="py-1.5 text-gray-500">{hp.notes || '-'}</td>
-                                    <td className="py-1.5">
-                                      {hp.addedToInventory ? (
-                                        <CheckCircle2 size={16} className="text-green-500" />
-                                      ) : (
-                                        <span className="text-gray-400">No</span>
-                                      )}
-                                    </td>
-                                  </tr>
-                                );
-                              })}
-                            </tbody>
-                          </table>
-                        )}
-
-                        {session.harvestedParts.length === 0 && (
-                          <p className="text-sm text-gray-400 italic">No parts harvested in this session.</p>
-                        )}
+                    {session.notes && (
+                      <div className="col-span-2 flex items-start gap-1">
+                        <FileText size={14} className="text-gray-400 mt-0.5" />
+                        <span className="text-gray-600">{session.notes}</span>
                       </div>
                     )}
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+                  </div>
+
+                  {session.harvestedParts.length > 0 && (
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="text-left text-xs text-gray-500 uppercase">
+                          <th className="pb-2">Part</th>
+                          <th className="pb-2">Qty</th>
+                          <th className="pb-2">Condition</th>
+                          <th className="pb-2">Notes</th>
+                          <th className="pb-2">Added</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {session.harvestedParts.map((hp) => {
+                          const part = getPartById(hp.partId);
+                          return (
+                            <tr key={hp.id} className="border-t border-gray-200">
+                              <td className="py-1.5 font-medium text-gray-800">
+                                {part?.name ?? 'Unknown Part'}
+                              </td>
+                              <td className="py-1.5 text-gray-600">{hp.quantity}</td>
+                              <td className="py-1.5">
+                                <ConditionBadge condition={hp.condition} />
+                              </td>
+                              <td className="py-1.5 text-gray-500">{hp.notes || '-'}</td>
+                              <td className="py-1.5">
+                                {hp.addedToInventory ? (
+                                  <CheckCircle2 size={16} className="text-green-500" />
+                                ) : (
+                                  <span className="text-gray-400">No</span>
+                                )}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  )}
+
+                  {session.harvestedParts.length === 0 && (
+                    <p className="text-sm text-gray-400 italic">No parts harvested in this session.</p>
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })}
       </div>
 
       {/* ── New Harvest Session Modal ──────────────────────────────────────────── */}

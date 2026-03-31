@@ -15,10 +15,13 @@ import {
   Trash2,
   Save,
   CheckCircle,
+  Loader2,
+  Sparkles,
 } from 'lucide-react';
 import { useApp } from '../data/store';
 import Modal from '../components/Modal';
 import type { ProductPart } from '../types';
+import { lookupAmazonProduct, type AmazonProductData } from '../data/odooApi';
 
 export default function ProductDetail() {
   const { id } = useParams<{ id: string }>();
@@ -74,6 +77,51 @@ export default function ProductDetail() {
   const [editProductImage, setEditProductImage] = useState<string>('');
   const [showToast, setShowToast] = useState(false);
   const editImageInputRef = useRef<HTMLInputElement>(null);
+
+  // Amazon enrichment state
+  const [enrichLoading, setEnrichLoading] = useState(false);
+  const [enrichResult, setEnrichResult] = useState<{ success: boolean; message: string } | null>(null);
+
+  async function handleEnrichProduct() {
+    if (!product) return;
+    const asin = product.asin;
+    if (!asin) {
+      setEnrichResult({ success: false, message: 'No ASIN available for this product. Add an ASIN first.' });
+      setTimeout(() => setEnrichResult(null), 4000);
+      return;
+    }
+    setEnrichLoading(true);
+    setEnrichResult(null);
+    try {
+      const result = await lookupAmazonProduct(asin);
+      if (result.found && result.data) {
+        const az = result.data;
+        const updates: Record<string, any> = {};
+        // Only update fields that are empty or if Amazon has better data
+        if (!product.name || product.name === product.asin) updates.name = az.title;
+        if (!product.manufacturer && az.brand) updates.manufacturer = az.brand;
+        if (!product.category && az.categories?.[0]) updates.category = az.categories[0];
+        if (!product.description && (az.description || az.features?.length)) {
+          updates.description = az.description || az.features?.join('\n') || '';
+        }
+        if (!product.image && az.mainImage) updates.image = az.mainImage;
+
+        if (Object.keys(updates).length > 0) {
+          updateProduct(product.id, updates);
+          setEnrichResult({ success: true, message: `Updated ${Object.keys(updates).length} field(s) from Amazon: ${Object.keys(updates).join(', ')}` });
+        } else {
+          setEnrichResult({ success: true, message: 'All fields already populated. No updates needed.' });
+        }
+      } else {
+        setEnrichResult({ success: false, message: `Product not found on Amazon for ASIN "${asin}".` });
+      }
+    } catch {
+      setEnrichResult({ success: false, message: 'Amazon lookup failed. Try again later.' });
+    } finally {
+      setEnrichLoading(false);
+      setTimeout(() => setEnrichResult(null), 5000);
+    }
+  }
 
   const productParts = useMemo(() => {
     if (!product) return [];
@@ -272,14 +320,31 @@ export default function ProductDetail() {
       <div className="bg-white rounded-xl border border-gray-200 p-6 mb-6">
         <div className="flex items-center justify-between mb-2">
           <h1 className="text-2xl font-bold text-gray-900">{product.name}</h1>
-          <button
-            onClick={handleOpenEditProduct}
-            className="flex items-center gap-2 px-3 py-2 text-sm bg-amber-50 text-amber-700 border border-amber-200 rounded-lg hover:bg-amber-100 transition-colors"
-          >
-            <Pencil size={16} />
-            Edit Product
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleEnrichProduct}
+              disabled={enrichLoading}
+              className="flex items-center gap-2 px-3 py-2 text-sm bg-purple-50 text-purple-700 border border-purple-200 rounded-lg hover:bg-purple-100 transition-colors disabled:opacity-50"
+            >
+              {enrichLoading ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={16} />}
+              {enrichLoading ? 'Enriching...' : 'Enrich with Amazon'}
+            </button>
+            <button
+              onClick={handleOpenEditProduct}
+              className="flex items-center gap-2 px-3 py-2 text-sm bg-amber-50 text-amber-700 border border-amber-200 rounded-lg hover:bg-amber-100 transition-colors"
+            >
+              <Pencil size={16} />
+              Edit Product
+            </button>
+          </div>
         </div>
+        {enrichResult && (
+          <div className={`mb-3 rounded-lg border px-3 py-2 text-sm ${
+            enrichResult.success ? 'bg-green-50 border-green-200 text-green-700' : 'bg-red-50 border-red-200 text-red-700'
+          }`}>
+            {enrichResult.message}
+          </div>
+        )}
         {product.image && (
           <div className="mb-4">
             <img src={product.image} alt={product.name} className="max-h-48 rounded-lg object-contain" />

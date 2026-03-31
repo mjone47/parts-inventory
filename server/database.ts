@@ -214,6 +214,33 @@ export function initializeDatabase(): Database.Database {
     );
   `);
 
+  // ── Amazon product data cache ────────────────────────────────────────────
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS amazon_product_cache (
+      asin TEXT PRIMARY KEY,
+      title TEXT NOT NULL DEFAULT '',
+      description TEXT NOT NULL DEFAULT '',
+      brand TEXT NOT NULL DEFAULT '',
+      main_image TEXT NOT NULL DEFAULT '',
+      images TEXT NOT NULL DEFAULT '[]',
+      price TEXT NOT NULL DEFAULT '',
+      price_amount REAL NOT NULL DEFAULT 0,
+      currency TEXT NOT NULL DEFAULT 'USD',
+      rating REAL NOT NULL DEFAULT 0,
+      reviews_count INTEGER NOT NULL DEFAULT 0,
+      categories TEXT NOT NULL DEFAULT '[]',
+      features TEXT NOT NULL DEFAULT '[]',
+      dimensions TEXT NOT NULL DEFAULT '',
+      weight TEXT NOT NULL DEFAULT '',
+      availability TEXT NOT NULL DEFAULT '',
+      is_prime INTEGER NOT NULL DEFAULT 0,
+      url TEXT NOT NULL DEFAULT '',
+      raw_json TEXT NOT NULL DEFAULT '{}',
+      fetched_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+  `);
+
   // ── LPN Records table ────────────────────────────────────────────────────
   database.exec(`
     CREATE TABLE IF NOT EXISTS lpn_records (
@@ -246,6 +273,7 @@ export function initializeDatabase(): Database.Database {
   migrate('CREATE UNIQUE INDEX IF NOT EXISTS idx_parts_part_number ON parts(part_number)');
   migrate('CREATE INDEX IF NOT EXISTS idx_lpn_records_lpn ON lpn_records(lpn)');
   migrate('CREATE INDEX IF NOT EXISTS idx_harvest_sessions_lpn ON harvest_sessions(lpn)');
+  migrate('CREATE INDEX IF NOT EXISTS idx_amazon_cache_asin ON amazon_product_cache(asin)');
 
   db = database;
   return database;

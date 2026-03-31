@@ -1,0 +1,16 @@
+diff --git a/node_modules/amazon-buddy/lib/constant.js b/node_modules/amazon-buddy/lib/constant.js
+index 6e8ade6..49eefd0 100644
+--- a/node_modules/amazon-buddy/lib/constant.js
++++ b/node_modules/amazon-buddy/lib/constant.js
+@@ -56,9 +56,9 @@ module.exports = {
+                 return '';
+             },
+             price_format: (price) => {
+-                const formatedPrice = price.match(/.*\$([0-9.]+)/);
++                const formatedPrice = price ? price.match(/.*\$([0-9.]+)/) : null;
+ 
+-                if (formatedPrice.length > 0) {
++                if (formatedPrice && formatedPrice.length > 0) {
+                     return parseFloat(formatedPrice[1]);
+                 }
+                 return 0.0;

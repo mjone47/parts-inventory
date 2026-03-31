@@ -37,3 +37,43 @@ export async function checkOdooHealth(): Promise<{ connected: boolean }> {
     return { connected: false };
   }
 }
+
+// ── Amazon product enrichment ────────────────────────────────────────────────
+
+export interface AmazonProductData {
+  asin: string;
+  title: string;
+  description: string;
+  brand: string;
+  mainImage: string;
+  images: string[];
+  price: string;
+  priceAmount: number;
+  currency: string;
+  rating: number;
+  reviewsCount: number;
+  categories: string[];
+  features: string[];
+  dimensions: string;
+  weight: string;
+  availability: string;
+  isPrime: boolean;
+  url: string;
+}
+
+export interface AmazonLookupResult {
+  found: boolean;
+  source?: 'cache' | 'amazon' | 'cache_stale';
+  data?: AmazonProductData;
+  error?: string;
+}
+
+export async function lookupAmazonProduct(asin: string): Promise<AmazonLookupResult> {
+  try {
+    const res = await fetch(`/api/amazon/product/${encodeURIComponent(asin)}`);
+    if (!res.ok) throw new Error(`Amazon API failed: ${res.status}`);
+    return res.json();
+  } catch {
+    return { found: false, error: 'Amazon lookup unavailable' };
+  }
+}

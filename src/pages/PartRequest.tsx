@@ -22,7 +22,7 @@ import {
 } from 'lucide-react';
 import { useApp } from '../data/store';
 import type { InternalOrderItem, Part, Product } from '../types';
-import { lookupLPN, saveLPNRecord } from '../data/odooApi';
+import { lookupLPN, saveLPNRecord, lookupAmazonProduct, type AmazonProductData } from '../data/odooApi';
 
 interface CartItem {
   part: Part;
@@ -127,6 +127,10 @@ export default function PartRequest() {
     odooData?: any;
   } | null>(null);
 
+  // Amazon enrichment state
+  const [amazonData, setAmazonData] = useState<AmazonProductData | null>(null);
+  const [amazonLoading, setAmazonLoading] = useState(false);
+
   // Exploded view state
   const [showExplodedView, setShowExplodedView] = useState(true);
   const [highlightedPartId, setHighlightedPartId] = useState<string | null>(null);
@@ -187,11 +191,28 @@ export default function PartRequest() {
 
   // ── LPN / Identifier Scan ─────────────────────────────────────────────────
 
+  // Trigger Amazon enrichment in background for a given ASIN
+  async function enrichWithAmazon(asin: string) {
+    if (!asin) return;
+    setAmazonLoading(true);
+    try {
+      const result = await lookupAmazonProduct(asin);
+      if (result.found && result.data) {
+        setAmazonData(result.data);
+      }
+    } catch {
+      // Silently fail — Amazon enrichment is best-effort
+    } finally {
+      setAmazonLoading(false);
+    }
+  }
+
   async function handleScan() {
     const trimmed = scanInput.trim();
     if (!trimmed) return;
     setScanLoading(true);
     setScanResult(null);
+    setAmazonData(null);
 
     const localMatch = products.find(
       (p) =>
@@ -206,6 +227,8 @@ export default function PartRequest() {
       setScanResult({ type: 'found', message: `Found: ${localMatch.name}`, productId: localMatch.id });
       setScanInput('');
       setScanLoading(false);
+      // Trigger Amazon enrichment if product has an ASIN
+      if (localMatch.asin) enrichWithAmazon(localMatch.asin);
       return;
     }
 
@@ -219,7 +242,13 @@ export default function PartRequest() {
           setScanResult({ type: 'found', message: `Found: ${localProd.name}`, productId: localProd.id });
           setScanInput('');
           saveLPNRecord({ lpn: trimmed, productId: localProd.id }).catch(() => {});
+          // Find the full product to get ASIN for Amazon enrichment
+          const fullProduct = products.find(p => p.id === localProd.id);
+          if (fullProduct?.asin) enrichWithAmazon(fullProduct.asin);
         } else if (result.odooData) {
+          // Odoo has the product but we don't — trigger Amazon enrichment with ASIN from Odoo
+          const odooAsin = result.odooData.productRef || result.odooData.product?.defaultCode || '';
+          if (odooAsin) enrichWithAmazon(odooAsin);
           setScanResult({
             type: 'odoo',
             message: `Found "${result.odooData.productName}" in Odoo, but it doesn't exist in Parts Inventory yet.`,
@@ -228,7 +257,38 @@ export default function PartRequest() {
           });
         }
       } else {
-        setScanResult({ type: 'not_found', message: `No product found for "${trimmed}".` });
+        // Not found locally or in Odoo — try Amazon directly if it looks like an ASIN
+        const looksLikeAsin = /^B0[A-Z0-9]{8}$/i.test(trimmed);
+        if (looksLikeAsin) {
+          setScanResult({ type: 'not_found', message: `No local or Odoo product found. Checking Amazon for ASIN "${trimmed}"...` });
+          try {
+            const amazonResult = await lookupAmazonProduct(trimmed);
+            if (amazonResult.found && amazonResult.data) {
+              setAmazonData(amazonResult.data);
+              setScanResult({
+                type: 'odoo',
+                message: `Found "${amazonResult.data.title}" on Amazon. Create it as a new product?`,
+                productName: amazonResult.data.title,
+                odooData: {
+                  productName: amazonResult.data.title,
+                  productRef: trimmed,
+                  product: {
+                    name: amazonResult.data.title,
+                    defaultCode: trimmed,
+                    category: amazonResult.data.categories?.[0] || '',
+                    description: amazonResult.data.description || amazonResult.data.features?.join('\n') || '',
+                  },
+                },
+              });
+            } else {
+              setScanResult({ type: 'not_found', message: `No product found for "${trimmed}" in any source.` });
+            }
+          } catch {
+            setScanResult({ type: 'not_found', message: `No product found for "${trimmed}".` });
+          }
+        } else {
+          setScanResult({ type: 'not_found', message: `No product found for "${trimmed}".` });
+        }
       }
     } catch {
       setScanResult({ type: 'not_found', message: `Could not look up "${trimmed}". Odoo may be unavailable.` });
@@ -240,14 +300,19 @@ export default function PartRequest() {
   function handleCreateFromOdoo() {
     if (!scanResult?.odooData) return;
     const od = scanResult.odooData;
+    const az = amazonData; // Amazon enrichment data (if available)
+
+    // Prefer Amazon data over Odoo data for richer fields
+    const productName = az?.title || od.productName || od.product?.name || 'Unknown Product';
     const newProduct = addProduct({
-      name: od.productName || od.product?.name || 'Unknown Product',
+      name: productName,
       model: '',
-      asin: od.productRef || od.product?.defaultCode || '',
+      asin: od.productRef || od.product?.defaultCode || az?.asin || '',
       upc: '',
-      manufacturer: '',
-      category: od.product?.category || '',
-      description: od.product?.description || '',
+      manufacturer: az?.brand || '',
+      category: az?.categories?.[0] || od.product?.category || '',
+      description: az?.description || az?.features?.join('\n') || od.product?.description || '',
+      image: az?.mainImage || '',
       parts: [],
     });
     if (scanInput.trim()) {
@@ -257,6 +322,7 @@ export default function PartRequest() {
     setProductSearchQuery(newProduct.name);
     setScanResult({ type: 'found', message: `Created & selected: ${newProduct.name}`, productId: newProduct.id });
     setScanInput('');
+    setAmazonData(null);
   }
 
   // ── Cart helpers ──────────────────────────────────────────────────────────
@@ -460,9 +526,55 @@ export default function PartRequest() {
                     className="mt-2 inline-flex items-center gap-1.5 px-3 py-1.5 bg-green-600 text-white rounded-lg text-sm font-medium hover:bg-green-700 transition-colors"
                   >
                     <Plus className="h-4 w-4" />
-                    Create Product from Odoo Data
+                    Create Product {amazonData ? 'with Amazon Data' : 'from Odoo Data'}
                   </button>
                 )}
+              </div>
+            )}
+
+            {/* Amazon enrichment preview */}
+            {amazonLoading && (
+              <div className="mt-3 rounded-lg border border-blue-200 bg-blue-50 p-3 flex items-center gap-2">
+                <Loader2 className="h-4 w-4 animate-spin text-blue-600" />
+                <span className="text-sm text-blue-700">Fetching Amazon product data...</span>
+              </div>
+            )}
+            {amazonData && !amazonLoading && (
+              <div className="mt-3 rounded-lg border border-purple-200 bg-purple-50 p-3">
+                <div className="flex gap-3">
+                  {amazonData.mainImage && (
+                    <img
+                      src={amazonData.mainImage}
+                      alt={amazonData.title}
+                      className="w-16 h-16 object-contain rounded bg-white border flex-shrink-0"
+                    />
+                  )}
+                  <div className="min-w-0 flex-1">
+                    <p className="text-xs font-semibold text-purple-700 mb-0.5">Amazon Product Data</p>
+                    <p className="text-sm font-medium text-gray-900 truncate">{amazonData.title}</p>
+                    <div className="flex items-center gap-3 mt-1 flex-wrap">
+                      {amazonData.brand && (
+                        <span className="text-xs text-gray-600">Brand: <strong>{amazonData.brand}</strong></span>
+                      )}
+                      {amazonData.price && (
+                        <span className="text-xs font-semibold text-green-700">{amazonData.price}</span>
+                      )}
+                      {amazonData.rating > 0 && (
+                        <span className="text-xs text-amber-600">
+                          {'★'.repeat(Math.round(amazonData.rating))} {amazonData.rating} ({amazonData.reviewsCount})
+                        </span>
+                      )}
+                      {amazonData.isPrime && (
+                        <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-blue-600 text-white">PRIME</span>
+                      )}
+                    </div>
+                    {amazonData.features && amazonData.features.length > 0 && (
+                      <p className="text-xs text-gray-500 mt-1 line-clamp-2">
+                        {amazonData.features[0]}
+                      </p>
+                    )}
+                  </div>
+                </div>
               </div>
             )}
           </div>

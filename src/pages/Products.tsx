@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Package, Plus, Search, ImagePlus, Upload, ChevronLeft, ChevronRight, ScanBarcode, ExternalLink, Loader2 } from 'lucide-react';
 import { useApp } from '../data/store';
 import Modal from '../components/Modal';
-import { lookupLPN, saveLPNRecord } from '../data/odooApi';
+import { lookupLPN, saveLPNRecord, lookupAmazonProduct, type AmazonProductData } from '../data/odooApi';
 import type { OdooLPNLookupResult } from '../types';
 
 export default function Products() {
@@ -23,6 +23,18 @@ export default function Products() {
   const [lpnLoading, setLpnLoading] = useState(false);
   const [lpnResult, setLpnResult] = useState<OdooLPNLookupResult | null>(null);
   const [lpnError, setLpnError] = useState('');
+  const [amazonData, setAmazonData] = useState<AmazonProductData | null>(null);
+  const [amazonLoading, setAmazonLoading] = useState(false);
+
+  async function enrichWithAmazon(asin: string) {
+    if (!asin) return;
+    setAmazonLoading(true);
+    try {
+      const result = await lookupAmazonProduct(asin);
+      if (result.found && result.data) setAmazonData(result.data);
+    } catch { /* best-effort */ }
+    finally { setAmazonLoading(false); }
+  }
 
   async function handleLPNSearch() {
     const trimmed = lpnQuery.trim();
@@ -30,6 +42,7 @@ export default function Products() {
     setLpnLoading(true);
     setLpnResult(null);
     setLpnError('');
+    setAmazonData(null);
     try {
       const result = await lookupLPN(trimmed);
       setLpnResult(result);
@@ -53,6 +66,41 @@ export default function Products() {
         navigate(`/products/${result.matchingLocalProduct.id}`);
         return;
       }
+      // Trigger Amazon enrichment if we have an ASIN from Odoo
+      if (result.found && result.odooData) {
+        const asin = result.odooData.productRef || result.odooData.product?.defaultCode || '';
+        if (asin) enrichWithAmazon(asin);
+      }
+      // If not found anywhere, try Amazon directly if it looks like an ASIN
+      if (!result.found) {
+        const looksLikeAsin = /^B0[A-Z0-9]{8}$/i.test(trimmed);
+        if (looksLikeAsin) {
+          const amazonResult = await lookupAmazonProduct(trimmed);
+          if (amazonResult.found && amazonResult.data) {
+            setAmazonData(amazonResult.data);
+            setLpnResult({
+              found: true,
+              source: 'odoo',
+              odooData: {
+                lotId: 0,
+                lpn: trimmed,
+                productId: 0,
+                productName: amazonResult.data.title,
+                productRef: trimmed,
+                product: {
+                  productId: 0,
+                  name: amazonResult.data.title,
+                  defaultCode: trimmed,
+                  barcode: false,
+                  category: amazonResult.data.categories?.[0] || '',
+                  description: amazonResult.data.description || amazonResult.data.features?.join('\n') || '',
+                  listPrice: amazonResult.data.priceAmount || 0,
+                },
+              },
+            } as OdooLPNLookupResult);
+          }
+        }
+      }
     } catch {
       setLpnError('Failed to look up LPN. Please try again.');
     } finally {
@@ -64,17 +112,19 @@ export default function Products() {
     if (!lpnResult?.odooData) return;
     const od = lpnResult.odooData;
     const product = od.product;
+    const az = amazonData;
 
-    // Create the product locally
+    // Create the product locally — prefer Amazon data for richer fields
+    const productName = az?.title || od.productName;
     const newProduct = addProduct({
-      name: od.productName,
+      name: productName,
       model: product?.defaultCode || od.productRef || '',
-      asin: od.productRef || '',
+      asin: od.productRef || az?.asin || '',
       upc: (product?.barcode as string) || '',
-      manufacturer: '',
-      category: product?.category || '',
-      description: product?.description || '',
-      image: undefined,
+      manufacturer: az?.brand || '',
+      category: az?.categories?.[0] || product?.category || '',
+      description: az?.description || az?.features?.join('\n') || product?.description || '',
+      image: az?.mainImage || undefined,
       parts: [],
     });
 
@@ -90,6 +140,7 @@ export default function Products() {
 
     setLpnResult(null);
     setLpnQuery('');
+    setAmazonData(null);
     navigate(`/products/${newProduct.id}`);
   }
 
@@ -171,7 +222,7 @@ export default function Products() {
           <input
             type="text"
             value={lpnQuery}
-            onChange={(e) => { setLpnQuery(e.target.value); setLpnResult(null); setLpnError(''); }}
+            onChange={(e) => { setLpnQuery(e.target.value); setLpnResult(null); setLpnError(''); setAmazonData(null); }}
             onKeyDown={(e) => { if (e.key === 'Enter') handleLPNSearch(); }}
             placeholder="Scan or type LPN number..."
             className="flex-1 rounded-lg border border-indigo-300 px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white"
@@ -212,13 +263,39 @@ export default function Products() {
                 <div><span className="text-gray-500">Category:</span> {lpnResult.odooData.product.category}</div>
               )}
             </div>
+            {/* Amazon enrichment preview */}
+            {amazonLoading && (
+              <div className="flex items-center gap-2 text-blue-600 mb-2">
+                <Loader2 size={14} className="animate-spin" />
+                <span className="text-xs">Fetching Amazon product data...</span>
+              </div>
+            )}
+            {amazonData && !amazonLoading && (
+              <div className="mb-3 rounded-lg border border-purple-200 bg-purple-50 p-2.5">
+                <div className="flex gap-3">
+                  {amazonData.mainImage && (
+                    <img src={amazonData.mainImage} alt={amazonData.title} className="w-16 h-16 object-contain rounded bg-white border flex-shrink-0" />
+                  )}
+                  <div className="min-w-0 flex-1">
+                    <p className="text-[10px] font-semibold text-purple-700">Amazon Enrichment</p>
+                    <p className="text-sm font-medium text-gray-900 truncate">{amazonData.title}</p>
+                    <div className="flex items-center gap-3 mt-0.5 flex-wrap">
+                      {amazonData.brand && <span className="text-xs text-gray-600">Brand: <strong>{amazonData.brand}</strong></span>}
+                      {amazonData.price && <span className="text-xs font-semibold text-green-700">{amazonData.price}</span>}
+                      {amazonData.rating > 0 && <span className="text-xs text-amber-600">{'★'.repeat(Math.round(amazonData.rating))} {amazonData.rating}</span>}
+                      {amazonData.isPrime && <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-blue-600 text-white">PRIME</span>}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
             <p className="text-sm text-gray-600 mb-2">This product doesn't exist in your Parts Inventory yet.</p>
             <button
               onClick={handleCreateFromOdoo}
               className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 text-sm font-medium flex items-center gap-1.5 transition-colors"
             >
               <Plus size={16} />
-              Create Product from Odoo Data
+              {amazonData ? 'Create Product with Amazon Data' : 'Create Product from Odoo Data'}
             </button>
           </div>
         )}
